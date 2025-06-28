@@ -8,5 +8,3 @@ pytest-asyncio>=0.23.0
 
 # Plugin for mocking objects and functions
 pytest-mock>=3.14.0
-
-
