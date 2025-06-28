@@ -1,0 +1,74 @@
+# .gitignore
+
+# --- Secrets ---
+# Never commit your environment variables file.
+.env
+
+# Never commit the secret key used for encrypting the GitHub token.
+bot_secret.key
+
+# --- Local Database ---
+# The SQLite database file should be local to each instance.
+bot_data.db
+*.db
+*.sqlite3
+
+# --- Python ---
+# Virtual environment directory.
+venv/
+/venv/
+.venv/
+/.venv/
+
+# Byte-compiled / optimized / C-extensions.
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Distribution / packaging.
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Testing ---
+# Pytest cache and reporting files.
+.pytest_cache/
+pytest_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+*.prof
+
+# --- IDEs and Editors ---
+# Visual Studio Code
+.vscode/
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# PyCharm
+.idea/
+
+# --- Operating System Files ---
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
