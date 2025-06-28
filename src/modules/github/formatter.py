@@ -42,11 +42,13 @@ class RepoFormatter:
 
         # Safely access languages from the nested model
         languages_text = "Not specified"
-        if repo.languages and repo.languages.nodes:
-            top_languages = [lang.name for lang in repo.languages.nodes]
-            languages_text = " ".join(
-                [f"#{lang.replace('-', '_')}" for lang in top_languages]
-            )
+        if repo.languages and repo.languages.edges and repo.languages.total_size > 0:
+            lang_texts = []
+            for edge in repo.languages.edges:
+                percentage = (edge.size / repo.languages.total_size) * 100
+                lang_name = edge.node.name.replace('-', '_')
+                lang_texts.append(f"#{lang_name} (<code>{percentage:.1f}%</code>)")
+            languages_text = " ".join(lang_texts)
 
         return (
             f"📦 <a href='{repo.url}'>{repo.name_with_owner}</a>\n\n"

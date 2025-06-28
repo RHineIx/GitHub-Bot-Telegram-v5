@@ -41,9 +41,14 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
         url
       }
     }
+    # --- The languages query is now more detailed ---
     languages(first: 3, orderBy: {field: SIZE, direction: DESC}) {
-      nodes {
-        name
+      totalSize
+      edges {
+        size
+        node {
+          name
+        }
       }
     }
   }

@@ -12,9 +12,15 @@ from pydantic import BaseModel, Field
 class LanguageNode(BaseModel):
     name: str
 
+class LanguageEdge(BaseModel):
+    """Represents the connection between the repo and a language, holding size info."""
+    size: int
+    node: LanguageNode
 
 class Languages(BaseModel):
-    nodes: List[LanguageNode]
+    """Holds the list of language edges and the total size."""
+    total_size: int = Field(..., alias="totalSize")
+    edges: List[LanguageEdge]
 
 
 class ReleaseNode(BaseModel):
