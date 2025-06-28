@@ -1,4 +1,4 @@
-# src/rhineix_github_bot/core/database.py
+# src/core/database.py
 
 import logging
 from typing import Optional, List, Any
@@ -29,14 +29,17 @@ class DatabaseManager:
         except FileNotFoundError:
             logger.info(f"Generating new encryption key at {self.key_path}")
             key = Fernet.generate_key()
-            with open(self.key_path, "wb") as f: f.write(key)
+            with open(self.key_path, "wb") as f:
+                f.write(key)
             return key
 
     async def init_db(self) -> None:
-        if self._connection: return
+        if self._connection:
+            return
         try:
             self._connection = await aiosqlite.connect(self.db_path)
-            await self._connection.executescript("""
+            await self._connection.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
                 CREATE TABLE IF NOT EXISTS digest_queue (
@@ -44,12 +47,14 @@ class DatabaseManager:
                     repo_full_name TEXT UNIQUE NOT NULL,
                     added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-            """)
+            """
+            )
             await self._connection.commit()
             logger.info("Database initialized and connection established.")
         except Exception as e:
             logger.error(f"Failed to initialize database: {e}", exc_info=True)
-            if self._connection: await self._connection.close()
+            if self._connection:
+                await self._connection.close()
             raise
 
     async def close(self) -> None:
@@ -58,11 +63,16 @@ class DatabaseManager:
             logger.info("Database connection closed.")
 
     async def _set_state_value(self, key: str, value: Any) -> None:
-        await self._connection.execute("INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)", (key, str(value)))
+        await self._connection.execute(
+            "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+            (key, str(value)),
+        )
         await self._connection.commit()
 
     async def _get_state_value(self, key: str) -> Optional[str]:
-        cursor = await self._connection.execute("SELECT value FROM bot_state WHERE key = ?", (key,))
+        cursor = await self._connection.execute(
+            "SELECT value FROM bot_state WHERE key = ?", (key,)
+        )
         row = await cursor.fetchone()
         return row[0] if row else None
 
@@ -73,14 +83,17 @@ class DatabaseManager:
 
     async def get_token(self) -> Optional[str]:
         encrypted_token = await self._get_state_value("github_token")
-        if encrypted_token: return self._cipher.decrypt(encrypted_token.encode()).decode()
+        if encrypted_token:
+            return self._cipher.decrypt(encrypted_token.encode()).decode()
         return None
 
     async def token_exists(self) -> bool:
         return await self._get_state_value("github_token") is not None
 
     async def remove_token(self) -> None:
-        await self._connection.execute("DELETE FROM bot_state WHERE key = ?", ("github_token",))
+        await self._connection.execute(
+            "DELETE FROM bot_state WHERE key = ?", ("github_token",)
+        )
         await self._connection.commit()
         logger.info("GitHub token has been removed.")
 
@@ -120,11 +133,15 @@ class DatabaseManager:
         return mode if mode else "off"
 
     async def add_destination(self, target_id: str) -> None:
-        await self._connection.execute("INSERT OR IGNORE INTO destinations (target_id) VALUES (?)", (target_id,))
+        await self._connection.execute(
+            "INSERT OR IGNORE INTO destinations (target_id) VALUES (?)", (target_id,)
+        )
         await self._connection.commit()
 
     async def remove_destination(self, target_id: str) -> int:
-        cursor = await self._connection.execute("DELETE FROM destinations WHERE target_id = ?", (target_id,))
+        cursor = await self._connection.execute(
+            "DELETE FROM destinations WHERE target_id = ?", (target_id,)
+        )
         await self._connection.commit()
         return cursor.rowcount
 
@@ -134,11 +151,16 @@ class DatabaseManager:
         return [row[0] for row in rows]
 
     async def add_repo_to_digest(self, repo_full_name: str) -> None:
-        await self._connection.execute("INSERT OR IGNORE INTO digest_queue (repo_full_name) VALUES (?)", (repo_full_name,))
+        await self._connection.execute(
+            "INSERT OR IGNORE INTO digest_queue (repo_full_name) VALUES (?)",
+            (repo_full_name,),
+        )
         await self._connection.commit()
 
     async def get_and_clear_digest_queue(self) -> List[str]:
-        cursor = await self._connection.execute("SELECT repo_full_name FROM digest_queue ORDER BY added_at ASC")
+        cursor = await self._connection.execute(
+            "SELECT repo_full_name FROM digest_queue ORDER BY added_at ASC"
+        )
         repo_list = [row[0] for row in await cursor.fetchall()]
         if repo_list:
             await self._connection.execute("DELETE FROM digest_queue")

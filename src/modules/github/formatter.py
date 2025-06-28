@@ -1,9 +1,9 @@
-# src/rhineix_github_bot/modules/github/formatter.py
+# src/modules/github/formatter.py
 
 import logging
 from typing import Optional
 
-from rhineix_github_bot.utils import format_time_ago
+from src.utils import format_time_ago
 from .models import Repository
 
 logger = logging.getLogger(__name__)
@@ -28,10 +28,10 @@ class RepoFormatter:
     ) -> str:
         """Constructs the main HTML message for a repository preview from GraphQL data."""
         description = ai_summary or repo.description or "No description available."
-        
+
         stars = RepoFormatter._format_number(repo.stargazer_count)
         forks = RepoFormatter._format_number(repo.fork_count)
-        
+
         last_updated_str = f'{repo.pushed_at.strftime("%Y-%m-%d")} ({format_time_ago(repo.pushed_at.isoformat())})'
 
         # Safely access the latest release from the nested model
@@ -44,7 +44,9 @@ class RepoFormatter:
         languages_text = "Not specified"
         if repo.languages and repo.languages.nodes:
             top_languages = [lang.name for lang in repo.languages.nodes]
-            languages_text = " ".join([f"#{lang.replace('-', '_')}" for lang in top_languages])
+            languages_text = " ".join(
+                [f"#{lang.replace('-', '_')}" for lang in top_languages]
+            )
 
         return (
             f"📦 <a href='{repo.url}'>{repo.name_with_owner}</a>\n\n"

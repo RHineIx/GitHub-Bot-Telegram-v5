@@ -1,4 +1,4 @@
-# src/rhineix_github_bot/modules/jobs/scheduler.py
+# src/modules/jobs/scheduler.py
 
 import asyncio
 import logging
@@ -7,7 +7,7 @@ from typing import Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from rhineix_github_bot.core.database import DatabaseManager
+from src.core.database import DatabaseManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,10 +22,14 @@ class DigestScheduler:
 
     def start(self):
         self.scheduler.add_job(self.send_daily_digest, "cron", hour=21, minute=0)
-        self.scheduler.add_job(self.send_weekly_digest, "cron", day_of_week="sun", hour=21, minute=0)
+        self.scheduler.add_job(
+            self.send_weekly_digest, "cron", day_of_week="sun", hour=21, minute=0
+        )
         self.scheduler.start()
-        logger.info("Digest scheduler started. Daily job at 21:00 UTC, Weekly on Sunday at 21:00 UTC.")
-        
+        logger.info(
+            "Digest scheduler started. Daily job at 21:00 UTC, Weekly on Sunday at 21:00 UTC."
+        )
+
     def stop(self):
         if self.scheduler.running:
             self.scheduler.shutdown()
@@ -33,7 +37,9 @@ class DigestScheduler:
 
     def get_next_run_time(self) -> Optional[datetime]:
         if self.scheduler.running and (jobs := self.scheduler.get_jobs()):
-            return min((job.next_run_time for job in jobs if job.next_run_time), default=None)
+            return min(
+                (job.next_run_time for job in jobs if job.next_run_time), default=None
+            )
         return None
 
     async def send_daily_digest(self):
@@ -52,6 +58,8 @@ class DigestScheduler:
             logger.info("Digest job ran, but the queue was empty.")
             return
 
-        logger.info(f"Found {len(queued_repos)} items in digest queue. Adding to processing queue.")
+        logger.info(
+            f"Found {len(queued_repos)} items in digest queue. Adding to processing queue."
+        )
         for repo_full_name in queued_repos:
             await self.repo_queue.put(repo_full_name)

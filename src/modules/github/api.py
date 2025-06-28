@@ -1,4 +1,4 @@
-# src/rhineix_github_bot/modules/github/api.py
+# src/modules/github/api.py
 
 import logging
 from typing import Any, Dict, List, Optional
@@ -7,8 +7,8 @@ import base64
 import aiohttp
 from pydantic import ValidationError
 
-from rhineix_github_bot.core.config import Settings
-from rhineix_github_bot.core.database import DatabaseManager
+from src.core.config import Settings
+from src.core.database import DatabaseManager
 from .models import NotificationRepoData, StarredEvent, RateLimitData
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
 }
 """
 
+
 class GitHubAPIError(Exception):
     def __init__(self, status_code: int, message: str, errors: Optional[List] = None):
         self.status_code = status_code
@@ -64,31 +65,47 @@ class GitHubAPI:
     def __init__(self, db_manager: DatabaseManager, settings: Settings):
         self.db_manager = db_manager
         self.settings = settings
-        self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout))
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout)
+        )
 
     async def close(self):
-        if self.session and not self.session.closed: await self.session.close()
+        if self.session and not self.session.closed:
+            await self.session.close()
 
     async def _get_headers(self) -> Dict[str, str]:
-        headers = { "Accept": "application/json", "User-Agent": "Rhineix-GitHub-Bot/3.0-GraphQL" }
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "Rhineix-GitHub-Bot/3.0-GraphQL",
+        }
         token = await self.db_manager.get_token()
-        if token: headers["Authorization"] = f"Bearer {token}"
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
         return headers
 
-    async def _execute_graphql_query(self, query: str, variables: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_graphql_query(
+        self, query: str, variables: Dict[str, Any]
+    ) -> Dict[str, Any]:
         """Executes a POST request to the GitHub GraphQL API."""
         headers = await self._get_headers()
-        if "Authorization" not in headers: raise GitHubAPIError(401, "GitHub token not found.")
-            
+        if "Authorization" not in headers:
+            raise GitHubAPIError(401, "GitHub token not found.")
+
         payload = {"query": query, "variables": variables}
 
-        async with self.session.post(self.settings.github_graphql_api, headers=headers, json=payload) as response:
+        async with self.session.post(
+            self.settings.github_graphql_api, headers=headers, json=payload
+        ) as response:
             if 200 <= response.status < 300:
                 json_response = await response.json()
                 if "errors" in json_response:
-                    raise GitHubAPIError(response.status, "GraphQL query returned errors.", errors=json_response["errors"])
+                    raise GitHubAPIError(
+                        response.status,
+                        "GraphQL query returned errors.",
+                        errors=json_response["errors"],
+                    )
                 return json_response.get("data", {})
-            
+
             raise GitHubAPIError(response.status, await response.text())
 
     # --- Public Methods ---
@@ -105,16 +122,22 @@ class GitHubAPI:
         except GitHubAPIError:
             return None
 
-    async def get_repository_data_for_notification(self, owner: str, repo: str) -> Optional[NotificationRepoData]:
+    async def get_repository_data_for_notification(
+        self, owner: str, repo: str
+    ) -> Optional[NotificationRepoData]:
         """Fetches all data needed for a repo notification in a single GraphQL call."""
         try:
             variables = {"owner": owner, "name": repo}
-            data = await self._execute_graphql_query(GET_REPO_DATA_FOR_NOTIFICATION_QUERY, variables)
+            data = await self._execute_graphql_query(
+                GET_REPO_DATA_FOR_NOTIFICATION_QUERY, variables
+            )
             return NotificationRepoData.model_validate(data) if data else None
         except (ValidationError, GitHubAPIError) as e:
-            logger.error(f"Failed to get/validate GraphQL repo data for {owner}/{repo}: {e}")
+            logger.error(
+                f"Failed to get/validate GraphQL repo data for {owner}/{repo}: {e}"
+            )
             return None
-        
+
     async def get_readme(self, owner: str, repo: str) -> Optional[str]:
         """
         Fetches and decodes the README for a repository using the intelligent v3 REST endpoint.
@@ -134,18 +157,22 @@ class GitHubAPI:
             logger.error(f"Failed to fetch README for {owner}/{repo} via REST: {e}")
             return None
 
-
-    async def get_readme_content(self, owner: str, repo: str, branch: str) -> Optional[str]:
+    async def get_readme_content(
+        self, owner: str, repo: str, branch: str
+    ) -> Optional[str]:
         """Fetches and decodes the README using a direct raw content URL."""
         url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
         try:
             async with self.session.get(url) as response:
-                if response.status == 200: return await response.text()
+                if response.status == 200:
+                    return await response.text()
         except Exception as e:
             logger.error(f"Failed to fetch README content for {owner}/{repo}: {e}")
         return None
 
-    async def get_authenticated_user_starred_events(self) -> Optional[List[StarredEvent]]:
+    async def get_authenticated_user_starred_events(
+        self,
+    ) -> Optional[List[StarredEvent]]:
         """Gets the most recent starred events (still using REST for now)."""
         url = f"{self.settings.github_api_base}/user/starred?sort=created&direction=desc&per_page=30"
         headers = await self._get_headers()
@@ -159,7 +186,7 @@ class GitHubAPI:
         except (ValidationError, aiohttp.ClientError) as e:
             logger.error(f"Failed to get/validate starred events via REST: {e}")
             return None
-        
+
     async def get_rate_limit(self) -> Optional[RateLimitData]:
         """Fetches the current rate limit status using the GraphQL API."""
         try:

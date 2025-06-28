@@ -1,4 +1,4 @@
-# src/rhineix_github_bot/modules/telegram/handlers/command_handlers.py
+# src/modules/telegram/handlers/command_handlers.py
 
 import asyncio
 import logging
@@ -9,16 +9,16 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 
-from rhineix_github_bot.core.config import Settings
-from rhineix_github_bot.core.database import DatabaseManager
-from rhineix_github_bot.modules.github.api import GitHubAPI, GitHubAPIError
-from rhineix_github_bot.modules.jobs.scheduler import DigestScheduler
-from rhineix_github_bot.modules.telegram.filters import IsOwnerFilter
-from rhineix_github_bot.modules.telegram.keyboards import (
+from src.core.config import Settings
+from src.core.database import DatabaseManager
+from src.modules.github.api import GitHubAPI, GitHubAPIError
+from src.modules.jobs.scheduler import DigestScheduler
+from src.modules.telegram.filters import IsOwnerFilter
+from src.modules.telegram.keyboards import (
     get_remove_token_keyboard,
     get_settings_menu_keyboard,
 )
-from rhineix_github_bot.utils import format_duration, format_time_ago
+from src.utils import format_duration, format_time_ago
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -96,7 +96,11 @@ async def handle_status(
         status_lines.append(f"📢 *Monitoring:* `{monitoring_status}`")
         ai_status = "Enabled" if settings.gemini_api_key else "Disabled (No API Key)"
         if settings.gemini_api_key:
-            db_ai_status = "Active ✅" if await db_manager.are_ai_features_enabled() else "Inactive ❌"
+            db_ai_status = (
+                "Active ✅"
+                if await db_manager.are_ai_features_enabled()
+                else "Inactive ❌"
+            )
             ai_status = f"Enabled ({db_ai_status})"
         status_lines.append(f"🤖 *AI Features:* `{ai_status}`")
         if next_run := scheduler.get_next_run_time():

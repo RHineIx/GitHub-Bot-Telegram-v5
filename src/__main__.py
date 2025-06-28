@@ -1,9 +1,9 @@
-# src/rhineix_github_bot/__main__.py
+# src/__main__.py
 
 import asyncio
 import logging
 
-from rhineix_github_bot.bot import run
+from src.bot import run
 
 if __name__ == "__main__":
     try:

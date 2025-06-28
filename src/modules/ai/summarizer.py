@@ -1,4 +1,4 @@
-# src/rhineix_github_bot/modules/ai/summarizer.py
+# src/modules/ai/summarizer.py
 
 import json
 import logging
@@ -9,7 +9,7 @@ import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockThreshold
 from pydantic import BaseModel, Field, ValidationError
 
-from rhineix_github_bot.core.config import Settings
+from src.core.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 class SelectedMedia(BaseModel):
     url: str = Field(..., description="The URL of the selected media file.")
 
+
 class MediaSelectionResponse(BaseModel):
     selected_media: List[SelectedMedia]
+
 
 class AISummarizer:
     """Encapsulates all interactions with the Google Gemini AI model."""
@@ -35,7 +37,9 @@ class AISummarizer:
             HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
-        self.model = genai.GenerativeModel(self.model_name, safety_settings=safety_settings)
+        self.model = genai.GenerativeModel(
+            self.model_name, safety_settings=safety_settings
+        )
 
     async def summarize_readme(self, readme_content: str) -> Optional[str]:
         if not readme_content or len(readme_content) < 50:
@@ -67,10 +71,14 @@ class AISummarizer:
             logger.info("Successfully received summary from Gemini.")
             return summary if summary else None
         except Exception as e:
-            logger.error(f"An error occurred during README summarization with Gemini: {e}")
+            logger.error(
+                f"An error occurred during README summarization with Gemini: {e}"
+            )
             return None
 
-    async def select_preview_media(self, readme_content: str, media_urls: List[str]) -> List[str]:
+    async def select_preview_media(
+        self, readme_content: str, media_urls: List[str]
+    ) -> List[str]:
         if not media_urls:
             return []
 
@@ -106,13 +114,19 @@ class AISummarizer:
         try:
             logger.info("Asking Gemini to select the best preview media...")
             generation_config = GenerationConfig(response_mime_type="application/json")
-            response = await self.model.generate_content_async(prompt, generation_config=generation_config)
-            validated_response = MediaSelectionResponse.model_validate(json.loads(response.text))
+            response = await self.model.generate_content_async(
+                prompt, generation_config=generation_config
+            )
+            validated_response = MediaSelectionResponse.model_validate(
+                json.loads(response.text)
+            )
             selected_urls = [item.url for item in validated_response.selected_media]
             logger.info(f"Gemini selected {len(selected_urls)} valid media URLs.")
             return selected_urls[:3]
         except (json.JSONDecodeError, ValidationError) as e:
-            logger.warning(f"Failed to decode or validate Gemini's JSON response for media selection: {e}")
+            logger.warning(
+                f"Failed to decode or validate Gemini's JSON response for media selection: {e}"
+            )
             return []
         except Exception as e:
             logger.error(f"An error occurred during media selection with Gemini: {e}")
