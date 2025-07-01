@@ -50,7 +50,7 @@ class TestGetMediaInfo:
         # The 'url' attribute of the response object holds the final URL after redirects
         mock_response.url = "https://final.url/image.png"
 
-        # The response object is used in an 'async with' block, so we mock that behavior
+        # The response object is used in an 'async with' block, so mock that behavior
         mock_response.__aenter__.return_value = mock_response
 
         # 2. Arrange: Create a fake session and make its 'head' method return our fake response

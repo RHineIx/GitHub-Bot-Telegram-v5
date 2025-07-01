@@ -65,7 +65,7 @@ class ReleaseMonitor:
 
     async def _check_for_new_releases(self):
         tracked_list_slug = await self.db_manager.get_tracked_list()
-        # This check is now implicitly handled by the loop condition, but we keep it for safety
+        # This check is now implicitly handled by the loop condition, but keep it for safety
         if not tracked_list_slug:
             return
 

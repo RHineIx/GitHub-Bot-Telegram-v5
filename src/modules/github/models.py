@@ -28,6 +28,7 @@ class Languages(BaseModel):
 class ReleaseNode(BaseModel):
     tag_name: str = Field(..., alias="tagName")
     url: str
+    description: Optional[str] = None
 
 
 class LatestRelease(BaseModel):
@@ -63,8 +64,7 @@ class NotificationRepoData(BaseModel):
     repository: Optional[Repository] = None
 
 
-# --- Models for Starred Events (from REST API - kept for now) ---
-
+# --- Models for Starred Events (from REST API)
 
 class StarredEventRepo(BaseModel):
     id: int

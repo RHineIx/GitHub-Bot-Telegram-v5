@@ -68,8 +68,10 @@ async def get_interval_submenu_keyboard(
         ("10 minutes", 600),
         ("30 minutes", 1800),
         ("1 hour", 3600),
+        ("3 hours", 10800),
         ("6 hours", 21600),
         ("12 hours", 43200),
+        ("1 day", 86400),
     ]
 
     for label, seconds in intervals:
@@ -87,17 +89,18 @@ async def get_release_interval_submenu_keyboard(
 ) -> InlineKeyboardBuilder:
     """Builds the release monitoring interval selection submenu keyboard."""
     builder = InlineKeyboardBuilder()
-    # We'll default to 3600 seconds (1 hour) if nothing is set.
     current_interval = (
-        await db.get_release_monitor_interval() or 3600
+        await db.get_release_monitor_interval() or settings.default_release_monitor_interval
     )
     intervals = [
+        ("1 minute", 60)
         ("10 minutes", 600),
         ("30 minutes", 1800),
         ("1 hour", 3600),
         ("3 hours", 10800),
         ("6 hours", 21600),
         ("12 hours", 43200),
+        ("1 day", 86400),
     ]
 
     for label, seconds in intervals:
@@ -145,4 +148,11 @@ def get_tracking_lists_keyboard(lists: list[RepositoryList]) -> InlineKeyboardBu
         callback_data=cb_factory("close"),
     )
     builder.adjust(1)
+    return builder
+
+
+def get_view_on_github_keyboard(url: str) -> InlineKeyboardBuilder:
+    """Builds a simple keyboard with a single 'View on GitHub' URL button."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔗 View on GitHub", url=url)
     return builder

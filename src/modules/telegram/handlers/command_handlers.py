@@ -35,18 +35,23 @@ class TokenState(StatesGroup):
 async def handle_start(message: types.Message):
     help_text = (
         f"👋 **Hi, {message.from_user.first_name}!**\n\n"
-        "This bot monitors your GitHub starred repositories.\n\n"
+        "This bot monitors your GitHub activity.\n\n"
         "📖 **Available Commands**\n\n"
         "**Core & Status:**\n"
         "`/status` - Shows a detailed summary of the bot's current status.\n"
-        "`/settings` - Opens the interactive menu to configure the bot.\n\n"
+        "`/settings` - Opens the interactive menu to configure the bot.\n"
+        "`/track` - Configure tracking for new releases from a GitHub List.\n\n"
         "**Token Management:**\n"
         "`/settoken` - Saves your GitHub Personal Access Token.\n"
         "`/removetoken` - Deletes your currently stored token.\n\n"
-        "**Destination Management:**\n"
-        "`/add_dest <ID>` - Adds a channel/group/topic ID for notifications.\n"
-        "`/remove_dest <ID|me>` - Removes a notification destination.\n"
-        "`/list_dests` - Lists all configured destinations."
+        "**Destination Management (Stars):**\n"
+        "`/add_dest <ID>` - Adds a channel/group for star notifications.\n"
+        "`/remove_dest <ID|me>` - Removes a star notification destination.\n"
+        "`/list_dests` - Lists all configured star destinations.\n\n"
+        "**Destination Management (Releases):**\n"
+        "`/add_dest_rels <ID>` - Adds a destination for new releases.\n"
+        "`/remove_dest_rels <ID|me>` - Removes a release destination.\n"
+        "`/list_dest_rels` - Lists all release destinations."
     )
     await message.answer(help_text, parse_mode="Markdown")
 
@@ -75,6 +80,7 @@ async def handle_status(
             "rate_limit_data": github_api.get_rate_limit(),
             "viewer_login": github_api.get_viewer_login(),
             "destinations": db_manager.get_all_destinations(),
+            "release_dests": db_manager.get_all_release_destinations(),
             "is_paused": db_manager.is_monitoring_paused(),
         }
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -109,28 +115,16 @@ async def handle_status(
             status_lines.append(
                 f"🗓️ *Next Digest Job:* {format_time_ago(next_run.isoformat())}"
             )
-        stars_interval = (
-            res.get("stars_interval") or settings.default_stars_monitor_interval
-        )
         status_lines.extend(
             [
-                f"⭐ *Stars Interval:* `{format_duration(stars_interval)}`",
-                f"🧠 *AI Model:* `{settings.gemini_model_name}`",
-                f"📍 *Destinations:* `{len(res.get('destinations', []))}` configured.",
+                f"⭐ *Star Destinations:* `{len(res.get('destinations', []))}` configured.",
+                f"🚀 *Release Destinations:* `{len(res.get('release_dests', []))}` configured.",
             ]
         )
         await wait_msg.edit_text("\n".join(status_lines), parse_mode="Markdown")
     except Exception as e:
         logger.error(f"Error fetching status: {e}", exc_info=True)
         await wait_msg.edit_text("❌ An error occurred while fetching status.")
-
-
-@router.message(Command("settoken"))
-async def handle_set_token_command(message: types.Message, state: FSMContext):
-    await message.answer(
-        "Please send your GitHub Personal Access Token.\n\nYour token will be encrypted and stored securely. This message and your reply will be deleted automatically."
-    )
-    await state.set_state(TokenState.waiting_for_token)
 
 
 @router.message(TokenState.waiting_for_token, F.text)
@@ -144,16 +138,24 @@ async def process_token(
     token = message.text.strip()
     wait_msg = await message.answer("Validating token...")
 
-    # Store the token first, so the API client can use it
     await db_manager.store_token(token)
     try:
-        # Use the new validation method
         username = await github_api.get_viewer_login()
         if not username:
             raise GitHubAPIError(401, "Invalid token or missing permissions.")
 
+        user_chat_id = str(message.from_user.id)
+        # Add the user's chat as a destination for BOTH notification types
+        await db_manager.add_destination(user_chat_id)
+        await db_manager.add_release_destination(user_chat_id)
+        logger.info(f"Automatically added {user_chat_id} as a default destination for all notification types.")
+
         await db_manager.set_monitoring_paused(False)
-        reply_text = f"✅ **Token validated!**\n\nConnected to: `@{username}`.\nMonitoring is now active."
+        reply_text = (
+            f"✅ **Token validated!**\n\n"
+            f"Connected to: `@{username}`.\n"
+            f"Monitoring is now active, and this chat has been set as the default destination for all notifications."
+        )
         await wait_msg.edit_text(reply_text, parse_mode="Markdown")
 
     except GitHubAPIError:
@@ -187,10 +189,7 @@ async def handle_add_destination(
     db_manager: DatabaseManager,
 ):
     if not command.args:
-        await message.answer(
-            "Usage: `/add_dest <ID>`\nExample: `/add_dest -100123456789`",
-            parse_mode="Markdown",
-        )
+        await message.answer("Usage: `/add_dest <ID>`")
         return
     target_id, wait_msg = command.args, await message.answer(
         f"Verifying destination `{command.args}`..."
@@ -207,7 +206,7 @@ async def handle_add_destination(
         await bot.delete_message(chat_id_str, test_msg.message_id)
         await db_manager.add_destination(target_id)
         await wait_msg.edit_text(
-            f"✅ Destination `{target_id}` added successfully!", parse_mode="Markdown"
+            f"✅ Star destination `{target_id}` added successfully!", parse_mode="Markdown"
         )
     except Exception as e:
         logger.error(f"Failed to verify destination {target_id}: {e}")
@@ -222,27 +221,85 @@ async def handle_remove_destination(
     message: types.Message, command: CommandObject, db_manager: DatabaseManager
 ):
     if not command.args:
-        await message.answer("Usage: `/remove_dest <ID|me>`", parse_mode="Markdown")
+        await message.answer("Usage: `/remove_dest <ID|me>`")
         return
     target_id = (
         str(message.from_user.id) if command.args.lower() == "me" else command.args
     )
     if await db_manager.remove_destination(target_id) > 0:
-        await message.answer(
-            f"✅ Destination `{target_id}` removed.", parse_mode="Markdown"
-        )
+        await message.answer(f"✅ Star destination `{target_id}` removed.")
     else:
-        await message.answer(
-            f"❌ Destination `{target_id}` not found.", parse_mode="Markdown"
-        )
+        await message.answer(f"❌ Star destination `{target_id}` not found.")
 
 
 @router.message(Command("list_dests"))
 async def handle_list_destinations(message: types.Message, db_manager: DatabaseManager):
     if not (destinations := await db_manager.get_all_destinations()):
-        await message.answer("There are no notification destinations configured.")
+        await message.answer("There are no star notification destinations configured.")
         return
-    text = "📍 **Configured Destinations:**\n\n" + "\n".join(
+    text = "📍 **Configured Star Destinations:**\n\n" + "\n".join(
+        [f"`{dest}`" for dest in destinations]
+    )
+    await message.answer(text, parse_mode="Markdown")
+
+
+@router.message(Command("add_dest_rels"))
+async def handle_add_release_destination(
+    message: types.Message,
+    command: CommandObject,
+    bot: Bot,
+    db_manager: DatabaseManager,
+):
+    """Adds a destination for release notifications."""
+    if not command.args:
+        await message.answer("Usage: `/add_dest_rels <ID>`")
+        return
+    target_id, wait_msg = command.args, await message.answer(
+        f"Verifying destination `{command.args}`..."
+    )
+    try:
+        chat_id_str, thread_id = (
+            (target_id.split("/")[0], int(target_id.split("/")[1]))
+            if "/" in target_id
+            else (target_id, None)
+        )
+        test_msg = await bot.send_message(
+            chat_id_str, "✅ Verification successful.", message_thread_id=thread_id
+        )
+        await bot.delete_message(chat_id_str, test_msg.message_id)
+        await db_manager.add_release_destination(target_id)
+        await wait_msg.edit_text(
+            f"✅ Release destination `{target_id}` added successfully!", parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Failed to verify destination {target_id}: {e}")
+        await wait_msg.edit_text(
+            "❌ **Failed to add destination.**", parse_mode="Markdown"
+        )
+
+@router.message(Command("remove_dest_rels"))
+async def handle_remove_release_destination(
+    message: types.Message, command: CommandObject, db_manager: DatabaseManager
+):
+    """Removes a destination for release notifications."""
+    if not command.args:
+        await message.answer("Usage: `/remove_dest_rels <ID|me>`")
+        return
+    target_id = (
+        str(message.from_user.id) if command.args.lower() == "me" else command.args
+    )
+    if await db_manager.remove_release_destination(target_id) > 0:
+        await message.answer(f"✅ Release destination `{target_id}` removed.")
+    else:
+        await message.answer(f"❌ Release destination `{target_id}` not found.")
+
+@router.message(Command("list_dest_rels"))
+async def handle_list_release_destinations(message: types.Message, db_manager: DatabaseManager):
+    """Lists all configured release destinations."""
+    if not (destinations := await db_manager.get_all_release_destinations()):
+        await message.answer("There are no release notification destinations configured.")
+        return
+    text = "📍 **Configured Release Destinations:**\n\n" + "\n".join(
         [f"`{dest}`" for dest in destinations]
     )
     await message.answer(text, parse_mode="Markdown")
@@ -259,17 +316,14 @@ async def handle_test_log(message: types.Message, settings: Settings):
     except Exception as e:
         await message.answer(f"❌ Failed to send test log. Error: {e}")
 
+
 @router.message(Command("track"))
 async def handle_track_command(message: types.Message, github_api: GitHubAPI):
     """Displays the menu for selecting a GitHub List to track for releases."""
     wait_msg = await message.answer("🔍 Fetching your GitHub Lists...")
-
     lists_data = await github_api.get_user_repository_lists()
-
-    # The fix is here: we access `lists_data.lists` instead of `lists_data.repository_lists`
     if lists_data and lists_data.lists.edges:
         repo_lists = [edge.node for edge in lists_data.lists.edges]
-        
         keyboard = get_tracking_lists_keyboard(repo_lists)
         await wait_msg.edit_text(
             "**Track Releases from a List**\n\n"

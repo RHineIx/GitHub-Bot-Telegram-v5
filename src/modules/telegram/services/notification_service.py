@@ -7,12 +7,13 @@ import asyncio
 import aiohttp
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InputMediaPhoto, InputMediaVideo
+from aiogram.types import InputMediaPhoto, InputMediaVideo, InlineKeyboardMarkup
 
 from src.core.database import DatabaseManager
 from src.modules.ai.summarizer import AISummarizer
 from src.modules.github.api import GitHubAPI
 from src.modules.github.formatter import RepoFormatter
+from src.modules.telegram.keyboards import get_view_on_github_keyboard
 from src.utils import (
     extract_media_from_readme,
     get_media_info,
@@ -35,7 +36,6 @@ async def notification_worker(
 ):
     while not stop_event.is_set():
         try:
-            # Pop the new tuple format: (type, full_name)
             notification_type, repo_full_name = await asyncio.wait_for(
                 queue.get(), timeout=1.0
             )
@@ -77,26 +77,24 @@ class NotificationService:
             return
 
         repo = repo_data.repository
-        destinations = await self.db_manager.get_all_destinations()
+        destinations: List[str] = []
         media_group: List[InputMediaPhoto | InputMediaVideo] = []
         caption = ""
-
-        # --- Branch logic based on notification type ---
+        keyboard: Optional[InlineKeyboardMarkup] = None
 
         if notification_type == "release":
+            destinations = await self.db_manager.get_all_release_destinations()
             caption = RepoFormatter.format_release_notification(repo)
-            # Ensure there is a release to get a URL from
             if repo.latest_release and repo.latest_release.nodes:
                 release_url = repo.latest_release.nodes[0].url
-                # The session for scraping should be created here
+                keyboard = get_view_on_github_keyboard(release_url).as_markup()
                 async with aiohttp.ClientSession() as session:
-                    social_image_url = await scrape_social_preview_image(
-                        release_url, session
-                    )
-                    if social_image_url:
-                        media_group.append(InputMediaPhoto(media=social_image_url))
+                    image_url = await scrape_social_preview_image(release_url, session)
+                    if image_url:
+                        media_group.append(InputMediaPhoto(media=image_url))
 
         elif notification_type == "star":
+            destinations = await self.db_manager.get_all_destinations()
             readme_content = await self.github_api.get_readme(owner, repo_name)
             ai_summary = None
             if (
@@ -112,7 +110,6 @@ class NotificationService:
                     )
                     media_group = await self._build_media_group(selected_urls)
 
-            # Fallback for star notifications
             if not media_group:
                 main_repo_url = f"https://github.com/{owner}/{repo_name}"
                 async with aiohttp.ClientSession() as session:
@@ -121,12 +118,15 @@ class NotificationService:
                     )
                     if social_image_url:
                         media_group.append(InputMediaPhoto(media=social_image_url))
-
+            
             caption = RepoFormatter.format_repository_preview(repo, ai_summary)
 
-        # --- Send the notification ---
+        if not destinations:
+            logger.warning(f"No destinations found for type '{notification_type}'. Aborting.")
+            return
+
         for target_id in destinations:
-            await self._send_notification(target_id, caption, media_group)
+            await self._send_notification(target_id, caption, media_group, reply_markup=keyboard)
 
     async def _build_media_group(
         self, urls: List[str]
@@ -158,6 +158,7 @@ class NotificationService:
         target_id: str,
         caption: str,
         media_group: List[InputMediaPhoto | InputMediaVideo],
+        reply_markup: Optional[InlineKeyboardMarkup] = None,
     ):
         chat_id, thread_id = (
             (target_id.split("/")[0], int(target_id.split("/")[1]))
@@ -177,18 +178,23 @@ class NotificationService:
                         caption=caption,
                         parse_mode="HTML",
                         message_thread_id=thread_id,
+                        reply_markup=reply_markup,
                     )
                 else:
                     await self.bot.send_media_group(
-                        chat_id=chat_id, media=media_group, message_thread_id=thread_id
+                        chat_id=chat_id, 
+                        media=media_group, 
+                        message_thread_id=thread_id
+                        # Note: send_media_group doesn't support reply_markup on the whole group
                     )
             else:
                 await self.bot.send_message(
                     chat_id,
                     caption,
                     parse_mode="HTML",
-                    disable_web_page_preview=False,
+                    disable_web_page_preview=True if reply_markup else False,
                     message_thread_id=thread_id,
+                    reply_markup=reply_markup,
                 )
         except TelegramAPIError as e:
             error_message = str(e).lower()

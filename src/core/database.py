@@ -56,6 +56,10 @@ class DatabaseManager:
                         latest_release_tag TEXT NOT NULL,
                         last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
+                    -- In the executescript block, add:
+                    CREATE TABLE IF NOT EXISTS release_destinations (
+                        target_id TEXT PRIMARY KEY
+                    );
                     """
                 )
                 await self._connection.commit()
@@ -164,6 +168,24 @@ class DatabaseManager:
 
     async def get_all_destinations(self) -> List[str]:
         cursor = await self._connection.execute("SELECT target_id FROM destinations")
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+    
+    async def add_release_destination(self, target_id: str) -> None:
+        await self._connection.execute(
+            "INSERT OR IGNORE INTO release_destinations (target_id) VALUES (?)", (target_id,)
+        )
+        await self._connection.commit()
+
+    async def remove_release_destination(self, target_id: str) -> int:
+        cursor = await self._connection.execute(
+            "DELETE FROM release_destinations WHERE target_id = ?", (target_id,)
+        )
+        await self._connection.commit()
+        return cursor.rowcount
+
+    async def get_all_release_destinations(self) -> List[str]:
+        cursor = await self._connection.execute("SELECT target_id FROM release_destinations")
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
 

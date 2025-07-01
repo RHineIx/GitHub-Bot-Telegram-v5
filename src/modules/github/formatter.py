@@ -65,9 +65,21 @@ class RepoFormatter:
         """Constructs the HTML message for a new release notification."""
         release_node = repo.latest_release.nodes[0]
         
-        return (
-            f"🚀 <b>New Release: <a href='{repo.url}'>{repo.name_with_owner}</a></b>\n"
-            f"└─ 🔖 <code>{release_node.tag_name}</code>\n\n"
-            f"A new version has been published. "
-            f"<a href='{release_node.url}'>View release notes on GitHub.</a>"
-        ).strip()
+        # Start building the base message
+        message_parts = [
+            f"🚀 <b>New Release: <a href='{repo.url}'>{repo.name_with_owner}</a></b>",
+            f"└─ 🔖 <code>{release_node.tag_name}</code>"
+        ]
+
+        # Add the release notes if they exist, inside an expandable blockquote
+        if release_node.description:
+            # Truncate to a reasonable length to avoid hitting Telegram limits
+            notes = release_node.description[:1000]
+            if len(release_node.description) > 1000:
+                notes += "..."
+            
+            message_parts.append(f"\n<blockquote expandable>📝 {notes}</blockquote>")
+        repo_name_hashtag = repo.name_with_owner.split('/')[-1].replace('-', '_').capitalize()
+        message_parts.append(f"\n#NewRelease - #Releases{repo_name_hashtag}")
+
+        return "\n".join(message_parts)

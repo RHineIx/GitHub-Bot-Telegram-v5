@@ -40,6 +40,7 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
       nodes {
         tagName
         url
+        description
       }
     }
     # --- The languages query is now more detailed ---

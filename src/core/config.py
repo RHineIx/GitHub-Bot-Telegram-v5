@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     # --- Bot Behavior ---
     parse_mode: str = "HTML"
     request_timeout: int = 30
-    default_stars_monitor_interval: int = 300
+    default_stars_monitor_interval: int = 600
+
+    default_release_monitor_interval: int = 3600
 
     model_config = SettingsConfigDict(
         env_file=env_path, env_file_encoding="utf-8", extra="ignore"
