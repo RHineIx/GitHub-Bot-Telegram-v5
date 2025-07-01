@@ -33,8 +33,9 @@ async def notification_worker(
 ):
     while not stop_event.is_set():
         try:
-            repo_full_name = await asyncio.wait_for(queue.get(), timeout=1.0)
-            await service.process_and_send(repo_full_name)
+            # Pop the new tuple format: (type, full_name)
+            notification_type, repo_full_name = await asyncio.wait_for(queue.get(), timeout=1.0)
+            await service.process_and_send(notification_type, repo_full_name)
             queue.task_done()
         except asyncio.TimeoutError:
             continue
@@ -78,6 +79,7 @@ async def run():
 
 
     dp["monitor"] = star_monitor
+    dp["release_monitor"] = release_monitor
     dp["scheduler"] = scheduler
 
     dp.include_router(command_handlers.router)

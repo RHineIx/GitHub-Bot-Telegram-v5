@@ -31,9 +31,12 @@ async def get_settings_menu_keyboard(db: DatabaseManager) -> InlineKeyboardBuild
         text=f"🧠 AI: {'ON' if ai_enabled else 'OFF'}",
         callback_data=cb_factory("toggle_ai"),
     )
-    builder.button(text="⚙️ Intervals", callback_data=cb_factory("open_interval_menu"))
+    # Add the new button here
+    builder.button(text="⚙️ Stars Interval", callback_data=cb_factory("open_interval_menu"))
+    builder.button(text="🚀 Release Interval", callback_data=cb_factory("open_release_menu"))
+
     builder.button(text="❌ Close Menu", callback_data=cb_factory("close"))
-    builder.adjust(2, 2, 1)
+    builder.adjust(2, 2, 2, 1) # Adjust the layout
     return builder
 
 
@@ -79,6 +82,34 @@ async def get_interval_submenu_keyboard(
     builder.adjust(2, 2, 2, 1)
     return builder
 
+async def get_release_interval_submenu_keyboard(
+    db: DatabaseManager, settings: Settings
+) -> InlineKeyboardBuilder:
+    """Builds the release monitoring interval selection submenu keyboard."""
+    builder = InlineKeyboardBuilder()
+    # We'll default to 3600 seconds (1 hour) if nothing is set.
+    current_interval = (
+        await db.get_release_monitor_interval() or 3600
+    )
+    intervals = [
+        ("10 minutes", 600),
+        ("30 minutes", 1800),
+        ("1 hour", 3600),
+        ("3 hours", 10800),
+        ("6 hours", 21600),
+        ("12 hours", 43200),
+    ]
+
+    for label, seconds in intervals:
+        text = f"✅ {label}" if seconds == current_interval else label
+        builder.button(
+            text=text, callback_data=cb_factory("set_release_interval", str(seconds))
+        )
+
+    builder.button(text="⬅️ Back", callback_data=cb_factory("main_menu"))
+    builder.adjust(2, 2, 2, 1)
+    return builder
+
 
 def get_remove_token_keyboard() -> InlineKeyboardBuilder:
     """Builds the confirmation keyboard for token removal."""
@@ -105,7 +136,6 @@ def get_tracking_lists_keyboard(lists: list[RepositoryList]) -> InlineKeyboardBu
             text=f"📝 {repo_list.name}",
             callback_data=TrackingCallback(action="set_list", value=repo_list.slug).pack(),
         )
-    # ... (rest of the function is the same) ...
     builder.button(
         text="❌ Stop Tracking",
         callback_data=TrackingCallback(action="stop", value="all").pack(),

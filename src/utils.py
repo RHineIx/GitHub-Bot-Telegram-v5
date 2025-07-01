@@ -100,11 +100,11 @@ async def get_media_info(
 
 
 async def scrape_social_preview_image(
-    owner: str, repo: str, session: aiohttp.ClientSession
+    url: str, session: aiohttp.ClientSession
 ) -> Optional[str]:
-    repo_url = f"https://github.com/{owner}/{repo}"
+    """Scrapes a URL for its 'og:image' social media preview image."""
     try:
-        async with session.get(repo_url, timeout=15) as response:
+        async with session.get(url, timeout=15) as response:
             if response.status != 200:
                 return None
             soup = BeautifulSoup(await response.text(), "html.parser")
@@ -112,5 +112,5 @@ async def scrape_social_preview_image(
             if og_image_tag and og_image_tag.get("content"):
                 return og_image_tag.get("content")
     except Exception as e:
-        logger.error(f"Exception while scraping {repo_url} for social preview: {e}")
+        logger.error(f"Exception while scraping {url} for social preview: {e}")
     return None

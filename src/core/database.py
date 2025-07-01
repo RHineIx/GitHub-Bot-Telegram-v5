@@ -119,6 +119,14 @@ class DatabaseManager:
     async def get_stars_monitor_interval(self) -> Optional[int]:
         interval = await self._get_state_value("stars_monitor_interval")
         return int(interval) if interval else None
+    
+    async def update_release_monitor_interval(self, seconds: int) -> None:
+        await self._set_state_value("release_monitor_interval", seconds)
+        logger.info(f"Release monitor interval set to {seconds} seconds.")
+
+    async def get_release_monitor_interval(self) -> Optional[int]:
+        interval = await self._get_state_value("release_monitor_interval")
+        return int(interval) if interval else None
 
     async def update_last_check_timestamp(self, timestamp: str) -> None:
         await self._set_state_value("last_check_timestamp", timestamp)

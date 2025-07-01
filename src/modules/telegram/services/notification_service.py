@@ -30,10 +30,25 @@ PERMANENT_TELEGRAM_ERRORS = {
 }
 
 
+async def notification_worker(
+    queue: asyncio.Queue, service: "NotificationService", stop_event: asyncio.Event
+):
+    while not stop_event.is_set():
+        try:
+            # Pop the new tuple format: (type, full_name)
+            notification_type, repo_full_name = await asyncio.wait_for(
+                queue.get(), timeout=1.0
+            )
+            await service.process_and_send(notification_type, repo_full_name)
+            queue.task_done()
+        except asyncio.TimeoutError:
+            continue
+        except Exception as e:
+            logger.error(f"Error in notification worker: {e}", exc_info=True)
+
+
 class NotificationService:
-    """
-    Processes and sends notifications using the efficient GraphQL API client.
-    """
+    """Processes and sends notifications."""
 
     def __init__(
         self,
@@ -47,61 +62,75 @@ class NotificationService:
         self.github_api = github_api
         self.summarizer = summarizer
 
-    async def process_and_send(self, repo_full_name: str):
+    async def process_and_send(self, notification_type: str, repo_full_name: str):
         """Orchestrates fetching data and sending a notification for a repo."""
         owner, repo_name = repo_full_name.split("/")
-        logger.info(f"Processing notification for {repo_full_name}...")
+        logger.info(
+            f"Processing '{notification_type}' notification for {repo_full_name}..."
+        )
 
-        # --- STEP 1: Fetch all metadata with a single GraphQL call ---
         repo_data = await self.github_api.get_repository_data_for_notification(
             owner, repo_name
         )
         if not repo_data or not repo_data.repository:
-            logger.error(
-                f"Could not fetch GraphQL data for {repo_full_name}. Aborting."
-            )
+            logger.error(f"Could not fetch data for {repo_full_name}. Aborting.")
             return
 
         repo = repo_data.repository
-
-        # --- STEP 2: Fetch README content separately for AI processing ---
-        readme_content = await self.github_api.get_readme(owner, repo_name)
-
-        # --- STEP 3: Process with AI and build media group ---
-        ai_summary, media_group = None, []
-        if (
-            self.summarizer
-            and await self.db_manager.are_ai_features_enabled()
-            and readme_content
-        ):
-            ai_summary = await self.summarizer.summarize_readme(readme_content)
-            all_media = extract_media_from_readme(readme_content, repo)
-            if all_media:
-                selected_urls = await self.summarizer.select_preview_media(
-                    readme_content, all_media
-                )
-                media_group = await self._build_media_group(selected_urls)
-
-        # Fallback to social preview if needed
-        if not media_group:
-            async with aiohttp.ClientSession() as session:
-                social_image_url = await scrape_social_preview_image(
-                    owner, repo_name, session
-                )
-                if social_image_url:
-                    media_group.append(InputMediaPhoto(media=social_image_url))
-
-        # --- STEP 4: Format and send ---
-        caption = RepoFormatter.format_repository_preview(repo, ai_summary)
         destinations = await self.db_manager.get_all_destinations()
+        media_group: List[InputMediaPhoto | InputMediaVideo] = []
+        caption = ""
 
+        # --- Branch logic based on notification type ---
+
+        if notification_type == "release":
+            caption = RepoFormatter.format_release_notification(repo)
+            # Ensure there is a release to get a URL from
+            if repo.latest_release and repo.latest_release.nodes:
+                release_url = repo.latest_release.nodes[0].url
+                # The session for scraping should be created here
+                async with aiohttp.ClientSession() as session:
+                    social_image_url = await scrape_social_preview_image(
+                        release_url, session
+                    )
+                    if social_image_url:
+                        media_group.append(InputMediaPhoto(media=social_image_url))
+
+        elif notification_type == "star":
+            readme_content = await self.github_api.get_readme(owner, repo_name)
+            ai_summary = None
+            if (
+                self.summarizer
+                and await self.db_manager.are_ai_features_enabled()
+                and readme_content
+            ):
+                ai_summary = await self.summarizer.summarize_readme(readme_content)
+                all_media = extract_media_from_readme(readme_content, repo)
+                if all_media:
+                    selected_urls = await self.summarizer.select_preview_media(
+                        readme_content, all_media
+                    )
+                    media_group = await self._build_media_group(selected_urls)
+
+            # Fallback for star notifications
+            if not media_group:
+                main_repo_url = f"https://github.com/{owner}/{repo_name}"
+                async with aiohttp.ClientSession() as session:
+                    social_image_url = await scrape_social_preview_image(
+                        main_repo_url, session
+                    )
+                    if social_image_url:
+                        media_group.append(InputMediaPhoto(media=social_image_url))
+
+            caption = RepoFormatter.format_repository_preview(repo, ai_summary)
+
+        # --- Send the notification ---
         for target_id in destinations:
             await self._send_notification(target_id, caption, media_group)
 
     async def _build_media_group(
         self, urls: List[str]
     ) -> List[InputMediaPhoto | InputMediaVideo]:
-        # This method remains the same as our previous version
         media_group = []
         if not urls:
             return media_group
@@ -130,7 +159,6 @@ class NotificationService:
         caption: str,
         media_group: List[InputMediaPhoto | InputMediaVideo],
     ):
-        # This method also remains the same, with the self-healing logic
         chat_id, thread_id = (
             (target_id.split("/")[0], int(target_id.split("/")[1]))
             if "/" in target_id

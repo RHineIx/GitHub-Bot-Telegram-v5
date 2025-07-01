@@ -1,4 +1,4 @@
-# src/src/modules/telegram/handlers/settings_handlers.py (Corrected)
+# src/modules/telegram/handlers/settings_handlers.py
 
 import logging
 from aiogram import F, Router, types
@@ -7,9 +7,11 @@ from aiogram.exceptions import TelegramBadRequest
 from src.core.config import Settings
 from src.core.database import DatabaseManager
 from src.modules.jobs.monitor import RepositoryMonitor
+from src.modules.jobs.release_monitor import ReleaseMonitor
 from src.modules.telegram.keyboards import (
     get_digest_submenu_keyboard,
     get_interval_submenu_keyboard,
+    get_release_interval_submenu_keyboard,
     get_settings_menu_keyboard,
 )
 
@@ -34,6 +36,7 @@ async def handle_settings_callback(
     call: types.CallbackQuery,
     db_manager: DatabaseManager,
     monitor: RepositoryMonitor,
+    release_monitor: ReleaseMonitor, # Injected from dispatcher
     settings: Settings,
 ):
     await call.answer()
@@ -65,8 +68,11 @@ async def handle_settings_callback(
         await call.message.edit_text(
             "⚙️ Select Stars Monitoring Interval:", reply_markup=keyboard.as_markup()
         )
-
-    # --- FIX: Added check for digest mode ---
+    elif action == "open_release_menu":
+        keyboard = await get_release_interval_submenu_keyboard(db_manager, settings)
+        await call.message.edit_text(
+            "🚀 Select Release Monitoring Interval:", reply_markup=keyboard.as_markup()
+        )
     elif action == "set_digest_mode":
         if await db_manager.get_digest_mode() == value:
             await call.answer("This mode is already selected.")
@@ -76,8 +82,6 @@ async def handle_settings_callback(
         await call.message.edit_text(
             "🔔 Select Notification Mode:", reply_markup=keyboard.as_markup()
         )
-
-    # --- FIX: Added check for interval ---
     elif action == "set_stars_interval":
         new_interval = int(value)
         current_interval = (
@@ -93,7 +97,20 @@ async def handle_settings_callback(
         await call.message.edit_text(
             "⚙️ Select Stars Monitoring Interval:", reply_markup=keyboard.as_markup()
         )
+    elif action == "set_release_interval":
+        new_interval = int(value)
+        current_interval = await db_manager.get_release_monitor_interval() or 3600
 
+        if current_interval == new_interval:
+            await call.answer("This interval is already selected.")
+            return
+            
+        await db_manager.update_release_monitor_interval(new_interval)
+        release_monitor.signal_settings_changed()
+        keyboard = await get_release_interval_submenu_keyboard(db_manager, settings)
+        await call.message.edit_text(
+            "🚀 Select Release Monitoring Interval:", reply_markup=keyboard.as_markup()
+        )
     elif action == "confirm_remove_token":
         await db_manager.remove_token()
         await db_manager.set_monitoring_paused(True)

@@ -59,3 +59,15 @@ class RepoFormatter:
             f"💻 <b>Langs:</b> {languages_text}\n\n"
             f"<a href='{repo.url}'>🔗 View on GitHub</a>"
         ).strip()
+
+    @staticmethod
+    def format_release_notification(repo: Repository) -> str:
+        """Constructs the HTML message for a new release notification."""
+        release_node = repo.latest_release.nodes[0]
+        
+        return (
+            f"🚀 <b>New Release: <a href='{repo.url}'>{repo.name_with_owner}</a></b>\n"
+            f"└─ 🔖 <code>{release_node.tag_name}</code>\n\n"
+            f"A new version has been published. "
+            f"<a href='{release_node.url}'>View release notes on GitHub.</a>"
+        ).strip()

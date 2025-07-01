@@ -111,7 +111,7 @@ class RepositoryMonitor:
                     logger.info(
                         f"Queueing {event.repository.full_name} for instant notification."
                     )
-                    await self.repo_queue.put(event.repository.full_name)
+                    await self.repo_queue.put(("star", event.repository.full_name))
                 else:
                     logger.info(f"Adding {event.repository.full_name} to digest queue.")
                     await self.db_manager.add_repo_to_digest(event.repository.full_name)
