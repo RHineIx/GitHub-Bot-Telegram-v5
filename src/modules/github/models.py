@@ -121,11 +121,3 @@ class RepositoryListsConnection(BaseModel):
 class ViewerListsData(BaseModel):
     """The root model for the user's repository lists query."""
     lists: RepositoryListsConnection
-
-class NodeWithRepositories(BaseModel):
-    """Represents the ... on UserList fragment."""
-    repositories: RepositoriesInListConnection
-
-class NodeData(BaseModel):
-    """The root model for the node query."""
-    node: Optional[NodeWithRepositories]

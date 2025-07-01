@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 
 from src.core.config import Settings
 from src.core.database import DatabaseManager
-from .models import NotificationRepoData, StarredEvent, RateLimitData, ViewerListsData, NodeData
+from .models import NotificationRepoData, StarredEvent, RateLimitData, ViewerListsData
 
 logger = logging.getLogger(__name__)
 
@@ -73,36 +73,13 @@ query GetUserRepositoryListsWithID {
 }
 """
 
-# Query to get repositories from a specific List by its Node ID
-GET_LIST_REPOS_BY_ID_QUERY = """
-query GetListReposByID($listID: ID!) {
-  node(id: $listID) {
-    ... on UserList {
-      repositories(first: 100) {
-        nodes {
-          nameWithOwner
-        }
-      }
-    }
-  }
-}
-"""
 
 class GitHubAPIError(Exception):
-    def __init__(self, db_manager: DatabaseManager, settings: Settings):
-        self.db_manager = db_manager
-        self.settings = settings
-        
-        # Define headers with a standard browser User-Agent
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-        }
-
-        # Create the session with these headers
-        self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout),
-            headers=headers
-        )
+    def __init__(self, status_code: int, message: str, errors: Optional[List] = None):
+        self.status_code = status_code
+        self.message = message
+        self.errors = errors
+        super().__init__(f"GitHub API Error {status_code}: {message}")
 
 
 class GitHubAPI:
@@ -111,8 +88,13 @@ class GitHubAPI:
     def __init__(self, db_manager: DatabaseManager, settings: Settings):
         self.db_manager = db_manager
         self.settings = settings
+        
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        }
         self.session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout)
+            timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout),
+            headers=headers
         )
 
     async def close(self):
@@ -145,9 +127,6 @@ class GitHubAPI:
             if 200 <= response.status < 300:
                 json_response = await response.json()
                 if "errors" in json_response:
-                    # --- RE-ADD THIS TEMPORARY DEBUGGING LOG ---
-                    logger.error(f"GitHub GraphQL API returned specific errors: {json_response['errors']}")
-                    # ------------------------------------------
                     raise GitHubAPIError(
                         response.status,
                         "GraphQL query returned errors.",
@@ -242,19 +221,6 @@ class GitHubAPI:
         except Exception as e:
             logger.error(f"Failed to fetch README for {owner}/{repo} via REST: {e}")
             return None
-
-    async def get_readme_content(
-        self, owner: str, repo: str, branch: str
-    ) -> Optional[str]:
-        """Fetches and decodes the README using a direct raw content URL."""
-        url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
-        try:
-            async with self.session.get(url) as response:
-                if response.status == 200:
-                    return await response.text()
-        except Exception as e:
-            logger.error(f"Failed to fetch README content for {owner}/{repo}: {e}")
-        return None
 
     async def get_authenticated_user_starred_events(
         self,

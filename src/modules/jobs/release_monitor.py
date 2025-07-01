@@ -10,7 +10,7 @@ from src.modules.github.api import GitHubAPI, GitHubAPIError
 logger = logging.getLogger(__name__)
 
 # How often to check for new releases (in seconds)
-CHECK_INTERVAL = 30  # 1 hour
+CHECK_INTERVAL = 3600  # 1 hour
 
 class ReleaseMonitor:
     """A background job that checks for new releases in a tracked list."""
