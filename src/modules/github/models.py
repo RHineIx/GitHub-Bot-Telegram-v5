@@ -12,10 +12,12 @@ from pydantic import BaseModel, Field
 class LanguageNode(BaseModel):
     name: str
 
+
 class LanguageEdge(BaseModel):
     """Represents the connection between the repo and a language, holding size info."""
     size: int
     node: LanguageNode
+
 
 class Languages(BaseModel):
     """Holds the list of language edges and the total size."""
@@ -89,3 +91,41 @@ class RateLimitData(BaseModel):
     """The root model for the rate limit query."""
 
     rate_limit: Optional[RateLimit] = Field(None, alias="rateLimit")
+
+
+# --- Models for GitHub Repository Lists (GraphQL) ---
+
+class RepositoryInList(BaseModel):
+    """A simplified repository model for items within a list."""
+    name_with_owner: str = Field(..., alias="nameWithOwner")
+
+
+class RepositoriesInListConnection(BaseModel):
+    nodes: List[RepositoryInList]
+
+
+class RepositoryList(BaseModel):
+    """Represents a single GitHub List."""
+    name: str
+    slug: str
+
+
+class RepositoryListEdge(BaseModel):
+    node: RepositoryList
+
+
+class RepositoryListsConnection(BaseModel):
+    edges: List[RepositoryListEdge]
+
+
+class ViewerListsData(BaseModel):
+    """The root model for the user's repository lists query."""
+    lists: RepositoryListsConnection
+
+class NodeWithRepositories(BaseModel):
+    """Represents the ... on UserList fragment."""
+    repositories: RepositoriesInListConnection
+
+class NodeData(BaseModel):
+    """The root model for the node query."""
+    node: Optional[NodeWithRepositories]

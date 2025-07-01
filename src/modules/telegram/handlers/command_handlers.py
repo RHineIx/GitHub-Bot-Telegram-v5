@@ -17,7 +17,9 @@ from src.modules.telegram.filters import IsOwnerFilter
 from src.modules.telegram.keyboards import (
     get_remove_token_keyboard,
     get_settings_menu_keyboard,
+    get_tracking_lists_keyboard,
 )
+from src.modules.github.models import RepositoryList
 from src.utils import format_duration, format_time_ago
 
 logger = logging.getLogger(__name__)
@@ -256,3 +258,29 @@ async def handle_test_log(message: types.Message, settings: Settings):
         await message.answer("✅ A test error log has been sent to the log channel.")
     except Exception as e:
         await message.answer(f"❌ Failed to send test log. Error: {e}")
+
+@router.message(Command("track"))
+async def handle_track_command(message: types.Message, github_api: GitHubAPI):
+    """Displays the menu for selecting a GitHub List to track for releases."""
+    wait_msg = await message.answer("🔍 Fetching your GitHub Lists...")
+
+    lists_data = await github_api.get_user_repository_lists()
+
+    # The fix is here: we access `lists_data.lists` instead of `lists_data.repository_lists`
+    if lists_data and lists_data.lists.edges:
+        repo_lists = [edge.node for edge in lists_data.lists.edges]
+        
+        keyboard = get_tracking_lists_keyboard(repo_lists)
+        await wait_msg.edit_text(
+            "**Track Releases from a List**\n\n"
+            "Select a GitHub List below. The bot will monitor all repositories in that list and notify you of any new releases.",
+            reply_markup=keyboard.as_markup(),
+            parse_mode="Markdown"
+        )
+    else:
+        await wait_msg.edit_text(
+            "**No GitHub Lists Found**\n\n"
+            "You don't seem to have any Lists on your GitHub Stars page. Create one first, then run this command again.\n\n"
+            "You can create a list by going to your Stars, clicking the 'Lists' tab, and then 'Create list'.",
+            parse_mode="Markdown"
+        )

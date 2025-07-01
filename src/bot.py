@@ -14,10 +14,12 @@ from src.core.logging_setup import log_sender_task, setup_logging
 from src.modules.ai.summarizer import AISummarizer
 from src.modules.github.api import GitHubAPI
 from src.modules.jobs.monitor import RepositoryMonitor
+from src.modules.jobs.release_monitor import ReleaseMonitor
 from src.modules.jobs.scheduler import DigestScheduler
 from src.modules.telegram.handlers import (
     command_handlers,
     settings_handlers,
+    tracking_handlers,
 )
 from src.modules.telegram.services.notification_service import (
     NotificationService,
@@ -69,14 +71,18 @@ async def run():
     )
 
     notification_service = NotificationService(bot, db_manager, github_api, summarizer)
-    monitor = RepositoryMonitor(db_manager, github_api, settings, repo_queue)
     scheduler = DigestScheduler(db_manager, repo_queue)
 
-    dp["monitor"] = monitor
+    star_monitor = RepositoryMonitor(db_manager, github_api, settings, repo_queue)
+    release_monitor = ReleaseMonitor(db_manager, github_api, repo_queue)
+
+
+    dp["monitor"] = star_monitor
     dp["scheduler"] = scheduler
 
     dp.include_router(command_handlers.router)
     dp.include_router(settings_handlers.router)
+    dp.include_router(tracking_handlers.router)
 
     background_tasks = set()
     if log_handler_enabled:
@@ -84,7 +90,8 @@ async def run():
             asyncio.create_task(log_sender_task(bot, settings.log_channel_id))
         )
 
-    monitor.start()
+    star_monitor.start()
+    release_monitor.start()
     scheduler.start()
     background_tasks.add(
         asyncio.create_task(
@@ -101,7 +108,8 @@ async def run():
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
-        monitor.stop()
+        star_monitor.stop()
+        release_monitor.stop()
         scheduler.stop()
         await github_api.close()
         await db_manager.close()

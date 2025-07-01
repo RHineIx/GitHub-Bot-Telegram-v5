@@ -34,28 +34,37 @@ class DatabaseManager:
             return key
 
     async def init_db(self) -> None:
-        if self._connection:
-            return
-        try:
-            self._connection = await aiosqlite.connect(self.db_path)
-            await self._connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
-                CREATE TABLE IF NOT EXISTS digest_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    repo_full_name TEXT UNIQUE NOT NULL,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """
-            )
-            await self._connection.commit()
-            logger.info("Database initialized and connection established.")
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}", exc_info=True)
             if self._connection:
-                await self._connection.close()
-            raise
+                return
+            try:
+                self._connection = await aiosqlite.connect(self.db_path)
+                await self._connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
+                    CREATE TABLE IF NOT EXISTS digest_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        repo_full_name TEXT UNIQUE NOT NULL,
+                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    -- New tables for release tracking --
+                    CREATE TABLE IF NOT EXISTS tracked_list (
+                        list_slug TEXT PRIMARY KEY
+                    );
+                    CREATE TABLE IF NOT EXISTS repository_release_state (
+                        repo_full_name TEXT PRIMARY KEY,
+                        latest_release_tag TEXT NOT NULL,
+                        last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    """
+                )
+                await self._connection.commit()
+                logger.info("Database initialized and connection established.")
+            except Exception as e:
+                logger.error(f"Failed to initialize database: {e}", exc_info=True)
+                if self._connection:
+                    await self._connection.close()
+                raise
 
     async def close(self) -> None:
         if self._connection:
@@ -171,3 +180,49 @@ class DatabaseManager:
         cursor = await self._connection.execute("SELECT COUNT(*) FROM digest_queue")
         result = await cursor.fetchone()
         return result[0] if result else 0
+
+    # --- Methods for Release Tracking ---
+
+    async def set_tracked_list(self, list_slug: str) -> None:
+        """Sets the single GitHub List to be tracked, replacing any existing one."""
+        await self._connection.execute("DELETE FROM tracked_list")
+        await self._connection.execute(
+            "INSERT INTO tracked_list (list_slug) VALUES (?)", (list_slug,)
+        )
+        await self._connection.commit()
+        logger.info(f"Set tracked GitHub List to: {list_slug}")
+
+    async def get_tracked_list(self) -> Optional[str]:
+        """Gets the slug of the currently tracked GitHub List."""
+        cursor = await self._connection.execute("SELECT list_slug FROM tracked_list")
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def get_repository_release_state(self, repo_full_name: str) -> Optional[str]:
+        """Gets the last known release tag for a specific repository."""
+        cursor = await self._connection.execute(
+            "SELECT latest_release_tag FROM repository_release_state WHERE repo_full_name = ?",
+            (repo_full_name,),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def update_repository_release_state(self, repo_full_name: str, tag: str) -> None:
+        """Adds or updates the latest known release tag for a repository."""
+        await self._connection.execute(
+            """
+            INSERT INTO repository_release_state (repo_full_name, latest_release_tag, last_checked_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(repo_full_name) DO UPDATE SET
+                latest_release_tag = excluded.latest_release_tag,
+                last_checked_at = excluded.last_checked_at
+            """,
+            (repo_full_name, tag),
+        )
+        await self._connection.commit()
+
+    async def clear_release_states(self) -> None:
+        """Wipes all repository release states. Used when changing tracked lists."""
+        await self._connection.execute("DELETE FROM repository_release_state")
+        await self._connection.commit()
+        logger.info("Cleared all repository release states.")

@@ -6,10 +6,11 @@ import base64
 
 import aiohttp
 from pydantic import ValidationError
+from bs4 import BeautifulSoup
 
 from src.core.config import Settings
 from src.core.database import DatabaseManager
-from .models import NotificationRepoData, StarredEvent, RateLimitData
+from .models import NotificationRepoData, StarredEvent, RateLimitData, ViewerListsData, NodeData
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +56,53 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
 }
 """
 
+# Query to get the viewer's repository lists AND THEIR IDs
+GET_USER_REPOSITORY_LISTS_QUERY = """
+query GetUserRepositoryListsWithID {
+  viewer {
+    lists(first: 20) {
+      edges {
+        node {
+          id # <-- The crucial addition
+          name
+          slug
+        }
+      }
+    }
+  }
+}
+"""
+
+# Query to get repositories from a specific List by its Node ID
+GET_LIST_REPOS_BY_ID_QUERY = """
+query GetListReposByID($listID: ID!) {
+  node(id: $listID) {
+    ... on UserList {
+      repositories(first: 100) {
+        nodes {
+          nameWithOwner
+        }
+      }
+    }
+  }
+}
+"""
 
 class GitHubAPIError(Exception):
-    def __init__(self, status_code: int, message: str, errors: Optional[List] = None):
-        self.status_code = status_code
-        self.message = message
-        self.errors = errors
-        super().__init__(f"GitHub API Error {status_code}: {message}")
+    def __init__(self, db_manager: DatabaseManager, settings: Settings):
+        self.db_manager = db_manager
+        self.settings = settings
+        
+        # Define headers with a standard browser User-Agent
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        }
+
+        # Create the session with these headers
+        self.session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.settings.request_timeout),
+            headers=headers
+        )
 
 
 class GitHubAPI:
@@ -104,14 +145,54 @@ class GitHubAPI:
             if 200 <= response.status < 300:
                 json_response = await response.json()
                 if "errors" in json_response:
+                    # --- RE-ADD THIS TEMPORARY DEBUGGING LOG ---
+                    logger.error(f"GitHub GraphQL API returned specific errors: {json_response['errors']}")
+                    # ------------------------------------------
                     raise GitHubAPIError(
                         response.status,
                         "GraphQL query returned errors.",
                         errors=json_response["errors"],
                     )
+
                 return json_response.get("data", {})
 
             raise GitHubAPIError(response.status, await response.text())
+        
+    async def get_repos_in_list_by_scraping(
+        self, owner_login: str, list_slug: str
+    ) -> Optional[List[str]]:
+        """
+        Gets repository names from a list by scraping its public HTML page.
+        This is a fallback due to API limitations.
+        """
+        url = f"https://github.com/stars/{owner_login}/lists/{list_slug}"
+        logger.info(f"Attempting to scrape repository list from: {url}")
+        try:
+            async with self.session.get(url) as response:
+                if response.status != 200:
+                    logger.error(f"Failed to fetch list page {url}, status: {response.status}")
+                    return None
+                
+                html = await response.text()
+                soup = BeautifulSoup(html, "html.parser")
+                
+                # This selector looks for links directly inside H3 tags, a common pattern for titles.
+                repo_links = soup.select('h3 > a[href*="/"]')
+                
+                if not repo_links:
+                    logger.warning(f"No repository links found on page {url} with the new selector. The page structure might have changed.")
+                    # Add a debug log to see the HTML content if scraping fails
+                    logger.debug(f"Page content received for scraping:\n{html}")
+                    return []
+                    
+                repo_full_names = [link['href'].lstrip('/') for link in repo_links]
+                logger.info(f"Successfully scraped {len(repo_full_names)} repos from list '{list_slug}'.")
+                return repo_full_names
+
+        except Exception as e:
+            logger.error(f"An exception occurred during web scraping of list {list_slug}: {e}", exc_info=True)
+            return None
+
 
     # --- Public Methods ---
 
@@ -200,3 +281,14 @@ class GitHubAPI:
         except (ValidationError, GitHubAPIError) as e:
             logger.error(f"Failed to get/validate GraphQL rate limit: {e}")
             return None
+
+
+    async def get_user_repository_lists(self) -> Optional[ViewerListsData]:
+            """Fetches the viewer's created repository lists."""
+            try:
+                data = await self._execute_graphql_query(GET_USER_REPOSITORY_LISTS_QUERY, {})
+                # The structure is nested under 'viewer'
+                return ViewerListsData.model_validate(data.get("viewer", {})) if data else None
+            except (ValidationError, GitHubAPIError) as e:
+                logger.error(f"Failed to get/validate GraphQL user repo lists: {e}")
+                return None

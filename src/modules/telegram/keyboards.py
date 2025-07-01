@@ -4,6 +4,8 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from src.core.config import Settings
 from src.core.database import DatabaseManager
+from aiogram.filters.callback_data import CallbackData
+from src.modules.github.models import RepositoryList
 
 
 def cb_factory(action: str, value: str = "") -> str:
@@ -85,4 +87,32 @@ def get_remove_token_keyboard() -> InlineKeyboardBuilder:
         text="✅ Yes, remove it", callback_data=cb_factory("confirm_remove_token")
     )
     builder.button(text="❌ Cancel", callback_data=cb_factory("cancel_action"))
+    return builder
+
+class TrackingCallback(CallbackData, prefix="track"):
+    """CallbackData factory for release tracking actions."""
+    action: str
+    value: str | None = None
+
+
+def get_tracking_lists_keyboard(lists: list[RepositoryList]) -> InlineKeyboardBuilder:
+    """Builds the keyboard for selecting a GitHub List to track."""
+    builder = InlineKeyboardBuilder()
+
+    for repo_list in lists:
+        # Go back to using the slug, as it's the filter key
+        builder.button(
+            text=f"📝 {repo_list.name}",
+            callback_data=TrackingCallback(action="set_list", value=repo_list.slug).pack(),
+        )
+    # ... (rest of the function is the same) ...
+    builder.button(
+        text="❌ Stop Tracking",
+        callback_data=TrackingCallback(action="stop", value="all").pack(),
+    )
+    builder.button(
+        text="⬅️ Close",
+        callback_data=cb_factory("close"),
+    )
+    builder.adjust(1)
     return builder
