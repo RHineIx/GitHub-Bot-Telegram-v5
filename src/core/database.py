@@ -1,5 +1,6 @@
 # src/core/database.py
 
+import asyncio
 import logging
 from typing import Optional, List, Any
 
@@ -19,6 +20,7 @@ class DatabaseManager:
         self.db_path = db_path
         self.key_path = key_path
         self._connection: Optional[aiosqlite.Connection] = None
+        self._write_lock = asyncio.Lock()  # Lock to serialize write operations
         self._encryption_key = self._get_or_create_key()
         self._cipher = Fernet(self._encryption_key)
 
@@ -34,41 +36,40 @@ class DatabaseManager:
             return key
 
     async def init_db(self) -> None:
+        if self._connection:
+            return
+        try:
+            # Set a timeout to reduce locking issues, though the lock is the main fix
+            self._connection = await aiosqlite.connect(self.db_path, timeout=10)
+            await self._connection.executescript(
+                """
+                CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS digest_queue (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    repo_full_name TEXT UNIQUE NOT NULL,
+                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS tracked_list (
+                    list_slug TEXT PRIMARY KEY
+                );
+                CREATE TABLE IF NOT EXISTS repository_release_state (
+                    repo_full_name TEXT PRIMARY KEY,
+                    latest_release_tag TEXT NOT NULL,
+                    last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS release_destinations (
+                    target_id TEXT PRIMARY KEY
+                );
+                """
+            )
+            await self._connection.commit()
+            logger.info("Database initialized and connection established.")
+        except Exception as e:
+            logger.error(f"Failed to initialize database: {e}", exc_info=True)
             if self._connection:
-                return
-            try:
-                self._connection = await aiosqlite.connect(self.db_path)
-                await self._connection.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-                    CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
-                    CREATE TABLE IF NOT EXISTS digest_queue (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        repo_full_name TEXT UNIQUE NOT NULL,
-                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                    -- New tables for release tracking --
-                    CREATE TABLE IF NOT EXISTS tracked_list (
-                        list_slug TEXT PRIMARY KEY
-                    );
-                    CREATE TABLE IF NOT EXISTS repository_release_state (
-                        repo_full_name TEXT PRIMARY KEY,
-                        latest_release_tag TEXT NOT NULL,
-                        last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                    -- In the executescript block, add:
-                    CREATE TABLE IF NOT EXISTS release_destinations (
-                        target_id TEXT PRIMARY KEY
-                    );
-                    """
-                )
-                await self._connection.commit()
-                logger.info("Database initialized and connection established.")
-            except Exception as e:
-                logger.error(f"Failed to initialize database: {e}", exc_info=True)
-                if self._connection:
-                    await self._connection.close()
-                raise
+                await self._connection.close()
+            raise
 
     async def close(self) -> None:
         if self._connection:
@@ -76,13 +77,16 @@ class DatabaseManager:
             logger.info("Database connection closed.")
 
     async def _set_state_value(self, key: str, value: Any) -> None:
-        await self._connection.execute(
-            "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
-            (key, str(value)),
-        )
-        await self._connection.commit()
+        # This method and all who call it are now protected by the lock
+        async with self._write_lock:
+            await self._connection.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                (key, str(value)),
+            )
+            await self._connection.commit()
 
     async def _get_state_value(self, key: str) -> Optional[str]:
+        # Read operations do not need to be locked
         cursor = await self._connection.execute(
             "SELECT value FROM bot_state WHERE key = ?", (key,)
         )
@@ -104,10 +108,11 @@ class DatabaseManager:
         return await self._get_state_value("github_token") is not None
 
     async def remove_token(self) -> None:
-        await self._connection.execute(
-            "DELETE FROM bot_state WHERE key = ?", ("github_token",)
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute(
+                "DELETE FROM bot_state WHERE key = ?", ("github_token",)
+            )
+            await self._connection.commit()
         logger.info("GitHub token has been removed.")
 
     async def set_monitoring_paused(self, paused: bool) -> None:
@@ -154,17 +159,19 @@ class DatabaseManager:
         return mode if mode else "off"
 
     async def add_destination(self, target_id: str) -> None:
-        await self._connection.execute(
-            "INSERT OR IGNORE INTO destinations (target_id) VALUES (?)", (target_id,)
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO destinations (target_id) VALUES (?)", (target_id,)
+            )
+            await self._connection.commit()
 
     async def remove_destination(self, target_id: str) -> int:
-        cursor = await self._connection.execute(
-            "DELETE FROM destinations WHERE target_id = ?", (target_id,)
-        )
-        await self._connection.commit()
-        return cursor.rowcount
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                "DELETE FROM destinations WHERE target_id = ?", (target_id,)
+            )
+            await self._connection.commit()
+            return cursor.rowcount
 
     async def get_all_destinations(self) -> List[str]:
         cursor = await self._connection.execute("SELECT target_id FROM destinations")
@@ -172,17 +179,19 @@ class DatabaseManager:
         return [row[0] for row in rows]
     
     async def add_release_destination(self, target_id: str) -> None:
-        await self._connection.execute(
-            "INSERT OR IGNORE INTO release_destinations (target_id) VALUES (?)", (target_id,)
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO release_destinations (target_id) VALUES (?)", (target_id,)
+            )
+            await self._connection.commit()
 
     async def remove_release_destination(self, target_id: str) -> int:
-        cursor = await self._connection.execute(
-            "DELETE FROM release_destinations WHERE target_id = ?", (target_id,)
-        )
-        await self._connection.commit()
-        return cursor.rowcount
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                "DELETE FROM release_destinations WHERE target_id = ?", (target_id,)
+            )
+            await self._connection.commit()
+            return cursor.rowcount
 
     async def get_all_release_destinations(self) -> List[str]:
         cursor = await self._connection.execute("SELECT target_id FROM release_destinations")
@@ -190,21 +199,23 @@ class DatabaseManager:
         return [row[0] for row in rows]
 
     async def add_repo_to_digest(self, repo_full_name: str) -> None:
-        await self._connection.execute(
-            "INSERT OR IGNORE INTO digest_queue (repo_full_name) VALUES (?)",
-            (repo_full_name,),
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute(
+                "INSERT OR IGNORE INTO digest_queue (repo_full_name) VALUES (?)",
+                (repo_full_name,),
+            )
+            await self._connection.commit()
 
     async def get_and_clear_digest_queue(self) -> List[str]:
-        cursor = await self._connection.execute(
-            "SELECT repo_full_name FROM digest_queue ORDER BY added_at ASC"
-        )
-        repo_list = [row[0] for row in await cursor.fetchall()]
-        if repo_list:
-            await self._connection.execute("DELETE FROM digest_queue")
-            await self._connection.commit()
-        return repo_list
+        async with self._write_lock:
+            cursor = await self._connection.execute(
+                "SELECT repo_full_name FROM digest_queue ORDER BY added_at ASC"
+            )
+            repo_list = [row[0] for row in await cursor.fetchall()]
+            if repo_list:
+                await self._connection.execute("DELETE FROM digest_queue")
+                await self._connection.commit()
+            return repo_list
 
     async def get_digest_queue_count(self) -> int:
         cursor = await self._connection.execute("SELECT COUNT(*) FROM digest_queue")
@@ -215,11 +226,12 @@ class DatabaseManager:
 
     async def set_tracked_list(self, list_slug: str) -> None:
         """Sets the single GitHub List to be tracked, replacing any existing one."""
-        await self._connection.execute("DELETE FROM tracked_list")
-        await self._connection.execute(
-            "INSERT INTO tracked_list (list_slug) VALUES (?)", (list_slug,)
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute("DELETE FROM tracked_list")
+            await self._connection.execute(
+                "INSERT INTO tracked_list (list_slug) VALUES (?)", (list_slug,)
+            )
+            await self._connection.commit()
         logger.info(f"Set tracked GitHub List to: {list_slug}")
 
     async def get_tracked_list(self) -> Optional[str]:
@@ -239,20 +251,22 @@ class DatabaseManager:
 
     async def update_repository_release_state(self, repo_full_name: str, tag: str) -> None:
         """Adds or updates the latest known release tag for a repository."""
-        await self._connection.execute(
-            """
-            INSERT INTO repository_release_state (repo_full_name, latest_release_tag, last_checked_at)
-            VALUES (?, ?, CURRENT_TIMESTAMP)
-            ON CONFLICT(repo_full_name) DO UPDATE SET
-                latest_release_tag = excluded.latest_release_tag,
-                last_checked_at = excluded.last_checked_at
-            """,
-            (repo_full_name, tag),
-        )
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute(
+                """
+                INSERT INTO repository_release_state (repo_full_name, latest_release_tag, last_checked_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(repo_full_name) DO UPDATE SET
+                    latest_release_tag = excluded.latest_release_tag,
+                    last_checked_at = excluded.last_checked_at
+                """,
+                (repo_full_name, tag),
+            )
+            await self._connection.commit()
 
     async def clear_release_states(self) -> None:
         """Wipes all repository release states. Used when changing tracked lists."""
-        await self._connection.execute("DELETE FROM repository_release_state")
-        await self._connection.commit()
+        async with self._write_lock:
+            await self._connection.execute("DELETE FROM repository_release_state")
+            await self._connection.commit()
         logger.info("Cleared all repository release states.")

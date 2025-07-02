@@ -19,8 +19,7 @@ from src.modules.telegram.keyboards import (
     get_settings_menu_keyboard,
     get_tracking_lists_keyboard,
 )
-from src.modules.github.models import RepositoryList
-from src.utils import format_duration, format_time_ago
+from src.utils import format_time_ago
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -35,7 +34,6 @@ class TokenState(StatesGroup):
 async def handle_start(message: types.Message):
     help_text = (
         f"👋 **Hi, {message.from_user.first_name}!**\n\n"
-        "This bot monitors your GitHub activity.\n\n"
         "📖 **Available Commands**\n\n"
         "**Core & Status:**\n"
         "`/status` - Shows a detailed summary of the bot's current status.\n"
@@ -53,13 +51,13 @@ async def handle_start(message: types.Message):
         "`/remove_dest_rels <ID|me>` - Removes a release destination.\n"
         "`/list_dest_rels` - Lists all release destinations."
     )
-    await message.answer(help_text, parse_mode="Markdown")
+    await message.answer(help_text, parse_mode="Markdown", message_effect_id="5046509860389126442")
 
 
 @router.message(Command("settings"))
 async def handle_settings(message: types.Message, db_manager: DatabaseManager):
     keyboard = await get_settings_menu_keyboard(db_manager)
-    await message.answer("⚙️ Bot Settings", reply_markup=keyboard.as_markup())
+    await message.answer("⚙️ Bot Settings\n", reply_markup=keyboard.as_markup())
 
 
 @router.message(Command("status"))
@@ -71,9 +69,11 @@ async def handle_status(
     start_time: datetime,
     scheduler: DigestScheduler,
 ):
+    # This command already has the token check, which is great.
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
+    
     wait_msg = await message.answer("🔍 Fetching status...")
     try:
         tasks = {
@@ -127,6 +127,18 @@ async def handle_status(
         await wait_msg.edit_text("❌ An error occurred while fetching status.")
 
 
+@router.message(Command("settoken"))
+async def handle_set_token(message: types.Message, state: FSMContext):
+    """Prompts the user to send their GitHub token."""
+    await message.answer(
+        "Please send your GitHub Personal Access Token.\n\n"
+        "The token needs the **`read:user`** and **`repo`** scopes.\n"
+        "Your token will be encrypted and stored securely.\n\n"
+        "To maximize security, your message with the token will be deleted after processing.", parse_mode="Markdown"
+    )
+    await state.set_state(TokenState.waiting_for_token)
+
+
 @router.message(TokenState.waiting_for_token, F.text)
 async def process_token(
     message: types.Message,
@@ -138,6 +150,7 @@ async def process_token(
     token = message.text.strip()
     wait_msg = await message.answer("Validating token...")
 
+    # Store the token temporarily for validation
     await db_manager.store_token(token)
     try:
         username = await github_api.get_viewer_login()
@@ -159,20 +172,26 @@ async def process_token(
         await wait_msg.edit_text(reply_text, parse_mode="Markdown")
 
     except GitHubAPIError:
-        await db_manager.remove_token()
+        await db_manager.remove_token() # Clean up the invalid token
         await wait_msg.edit_text(
-            "❌ **Invalid Token.** Please ensure it has the correct permissions and is not expired."
+            "❌ **Invalid Token.** Please ensure it has the correct permissions (read:user, repo) and is not expired."
         )
     finally:
         await state.clear()
         try:
+            # Delete the message containing the user's token for security
             await message.delete()
         except Exception:
             logger.warning("Could not delete user's token message.")
 
 
 @router.message(Command("removetoken"))
-async def handle_remove_token(message: types.Message):
+async def handle_remove_token(message: types.Message, db_manager: DatabaseManager):
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     keyboard = get_remove_token_keyboard()
     await message.answer(
         "⚠️ **Are you sure?**\n\nThis will stop all monitoring.",
@@ -188,6 +207,11 @@ async def handle_add_destination(
     bot: Bot,
     db_manager: DatabaseManager,
 ):
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not command.args:
         await message.answer("Usage: `/add_dest <ID>`")
         return
@@ -220,6 +244,11 @@ async def handle_add_destination(
 async def handle_remove_destination(
     message: types.Message, command: CommandObject, db_manager: DatabaseManager
 ):
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not command.args:
         await message.answer("Usage: `/remove_dest <ID|me>`")
         return
@@ -234,6 +263,11 @@ async def handle_remove_destination(
 
 @router.message(Command("list_dests"))
 async def handle_list_destinations(message: types.Message, db_manager: DatabaseManager):
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not (destinations := await db_manager.get_all_destinations()):
         await message.answer("There are no star notification destinations configured.")
         return
@@ -251,6 +285,11 @@ async def handle_add_release_destination(
     db_manager: DatabaseManager,
 ):
     """Adds a destination for release notifications."""
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not command.args:
         await message.answer("Usage: `/add_dest_rels <ID>`")
         return
@@ -282,6 +321,11 @@ async def handle_remove_release_destination(
     message: types.Message, command: CommandObject, db_manager: DatabaseManager
 ):
     """Removes a destination for release notifications."""
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not command.args:
         await message.answer("Usage: `/remove_dest_rels <ID|me>`")
         return
@@ -296,6 +340,11 @@ async def handle_remove_release_destination(
 @router.message(Command("list_dest_rels"))
 async def handle_list_release_destinations(message: types.Message, db_manager: DatabaseManager):
     """Lists all configured release destinations."""
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     if not (destinations := await db_manager.get_all_release_destinations()):
         await message.answer("There are no release notification destinations configured.")
         return
@@ -318,8 +367,13 @@ async def handle_test_log(message: types.Message, settings: Settings):
 
 
 @router.message(Command("track"))
-async def handle_track_command(message: types.Message, github_api: GitHubAPI):
+async def handle_track_command(message: types.Message, github_api: GitHubAPI, db_manager: DatabaseManager):
     """Displays the menu for selecting a GitHub List to track for releases."""
+    # ADDED: Token check
+    if not await db_manager.token_exists():
+        await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
+        return
+
     wait_msg = await message.answer("🔍 Fetching your GitHub Lists...")
     lists_data = await github_api.get_user_repository_lists()
     if lists_data and lists_data.lists.edges:

@@ -93,7 +93,7 @@ async def get_release_interval_submenu_keyboard(
         await db.get_release_monitor_interval() or settings.default_release_monitor_interval
     )
     intervals = [
-        ("1 minute", 60)
+        ("1 minute", 60),
         ("10 minutes", 600),
         ("30 minutes", 1800),
         ("1 hour", 3600),

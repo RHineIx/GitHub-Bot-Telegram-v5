@@ -62,4 +62,5 @@ class DigestScheduler:
             f"Found {len(queued_repos)} items in digest queue. Adding to processing queue."
         )
         for repo_full_name in queued_repos:
-            await self.repo_queue.put(repo_full_name)
+            # FIX: Put a tuple in the queue, matching the worker's expectation.
+            await self.repo_queue.put(("star", repo_full_name))

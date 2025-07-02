@@ -21,26 +21,17 @@ from src.modules.telegram.handlers import (
     settings_handlers,
     tracking_handlers,
 )
+# MODIFICATION: Import the worker function directly from the service
 from src.modules.telegram.services.notification_service import (
     NotificationService,
+    notification_worker,
 )
 
 logger = logging.getLogger(__name__)
 
 
-async def notification_worker(
-    queue: asyncio.Queue, service: NotificationService, stop_event: asyncio.Event
-):
-    while not stop_event.is_set():
-        try:
-            # Pop the new tuple format: (type, full_name)
-            notification_type, repo_full_name = await asyncio.wait_for(queue.get(), timeout=1.0)
-            await service.process_and_send(notification_type, repo_full_name)
-            queue.task_done()
-        except asyncio.TimeoutError:
-            continue
-        except Exception as e:
-            logger.error(f"Error in notification worker: {e}", exc_info=True)
+# REMOVED: The local definition of notification_worker has been removed
+# to eliminate code duplication. It is now imported from notification_service.py.
 
 
 async def run():
@@ -51,7 +42,6 @@ async def run():
     db_manager = DatabaseManager()
     await db_manager.init_db()
 
-    # The GitHubAPI is now our new GraphQL version
     github_api = GitHubAPI(db_manager=db_manager, settings=settings)
     summarizer = AISummarizer(settings) if settings.gemini_api_key else None
 
@@ -75,7 +65,7 @@ async def run():
     scheduler = DigestScheduler(db_manager, repo_queue)
 
     star_monitor = RepositoryMonitor(db_manager, github_api, settings, repo_queue)
-    release_monitor = ReleaseMonitor(db_manager, github_api, repo_queue)
+    release_monitor = ReleaseMonitor(db_manager, github_api, settings, repo_queue)
 
 
     dp["monitor"] = star_monitor
@@ -95,6 +85,8 @@ async def run():
     star_monitor.start()
     release_monitor.start()
     scheduler.start()
+    
+    # This now uses the imported notification_worker
     background_tasks.add(
         asyncio.create_task(
             notification_worker(repo_queue, notification_service, stop_event)
