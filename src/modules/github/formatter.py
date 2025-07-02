@@ -65,29 +65,29 @@ class RepoFormatter:
         """Constructs the HTML message for a new release notification."""
         release_node = repo.latest_release.nodes[0]
         
-        # Start building the base message
         message_parts = [
             f"🚀 <b>New Release: <a href='{repo.url}'>{repo.name_with_owner}</a></b>",
             f"└─ 🔖 <code>{release_node.tag_name}</code>"
-        
-        # Add the published date if it exists
         ]
+
         if release_node.published_at:
             published_str = format_release_date(release_node.published_at)
             message_parts.append(f"└─ 🗓️ Published: {published_str}")
 
-        # Add the release notes if they exist, inside an expandable blockquote
+        # Add the release notes if they exist, with safe truncation
         if release_node.description:
-            # Clean the markdown from the description before displaying it
-            notes = clean_release_notes(release_node.description)
+            raw_notes = release_node.description
             
-            # Truncate to a reasonable length to avoid hitting Telegram limits
-            if len(notes.encode('utf-8')) > 1000:
-                notes = notes.encode('utf-8')[:997].decode('utf-8', errors='ignore') + "..."
+            # Truncate the raw text first to a length suitable for captions
+            if len(raw_notes) > 1000:
+                raw_notes = raw_notes[:897] + "..."
+            
+            # Now, clean and format the already-shortened text
+            notes = clean_release_notes(raw_notes)
             
             message_parts.append(f"\n<blockquote expandable>📝 <b>Release Notes:</b>\n{notes}</blockquote>")
 
-        repo_name_hashtag = repo.name_with_owner.split('/')[-1].replace('-', '_').capitalize()
+        repo_name_hashtag = repo.name_with_owner.split('/')[-1].replace('-', '_').replace('.', '').capitalize()
         message_parts.append(f"\n#NewRelease - #Releases{repo_name_hashtag}")
 
         return "\n".join(message_parts)

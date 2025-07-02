@@ -71,7 +71,7 @@ def format_release_date(dt: datetime) -> str:
     relative_str = format_time_ago(dt)
     
     # Combine them into the desired format
-    return f"{absolute_str} ( {relative_str} )"
+    return f"{absolute_str} ({relative_str})"
 
 
 def extract_media_from_readme(markdown_text: str, repo: Repository) -> List[str]:
@@ -137,12 +137,12 @@ async def scrape_social_preview_image(
 def clean_release_notes(text: str) -> str:
     """
     Cleans and formats GitHub release notes from Markdown to a Telegram-friendly format.
-    This version corrects the order of operations and strips unsupported HTML.
+    This version uses BeautifulSoup as a final sanitizer to guarantee well-formed HTML.
     """
     if not text:
         return ""
-
-    # Strip unsupported HTML tags first, leaving only Telegram's supported subset.
+    
+    # Strip unsupported HTML tags first
     allowed_tags = ['b', 'i', 'a', 's', 'code', 'pre']
     pattern = r'</?(?!(' + '|'.join(allowed_tags) + r'))\w+[^>]*>'
     text = re.sub(pattern, '', text, flags=re.IGNORECASE)
@@ -153,27 +153,22 @@ def clean_release_notes(text: str) -> str:
 
     for line in lines:
         line = line.strip()
-
+        if re.fullmatch(r'\s*[-*_]{3,}\s*', line):
+            continue
         if not line:
             cleaned_lines.append("")
             continue
         
-        # Step 1: Check for a list marker and temporarily store it.
         list_marker = ""
         match = re.match(r'^\s*([\-\*]|\d+\.)\s+', line)
         if match:
             list_marker = "• "
             line = line[match.end():]
 
-        # Step 2: Now that the marker is gone, process headings.
         line = re.sub(r'^\s*#{1,6}\s*(.+?)\s*#*$', r'<b>\1</b>', line)
-
-        # Step 3: Process other inline formatting.
         line = re.sub(r'\*{2}(.+?)\*{2}', r'<b>\1</b>', line)
         line = re.sub(r'`([^`]+)`', r'<code>\1</code>', line)
         line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', line)
-
-        # Step 4: Handle special GitHub links and other patterns.
         line = re.sub(r'\[![^\]]+\]\s*', '', line)
         line = re.sub(r'^\s*>\s?', '', line)
 
@@ -193,9 +188,25 @@ def clean_release_notes(text: str) -> str:
             )
             line = f"📄 <b>{line}</b>"
             
-        # Step 5: Add the clean list marker back to the front.
         cleaned_lines.append(f"{list_marker}{line}".strip())
 
     formatted = '\n'.join(cleaned_lines)
-    formatted = re.sub(r'\n{3,}', '\n\n', formatted)
-    return formatted.strip()
+    formatted = re.sub(r'\n{3,}', '\n\n', formatted).strip()
+
+    # --- sanitization step using BeautifulSoup ---
+    # This robustly fixes any malformed or improperly nested tags
+    # that our regex substitutions might have accidentally created.
+    try:
+        # Parse the generated HTML fragment.
+        soup = BeautifulSoup(formatted, 'html.parser')
+        
+        # Convert it back to a string. BeautifulSoup automatically corrects errors.
+        # .decode_contents() gets the inner HTML without the <html><body> wrapper.
+        clean_html = soup.decode_contents()
+        
+        # cleanup of any extra whitespace introduced by the parser.
+        return "\n".join(line.strip() for line in clean_html.splitlines()).strip()
+    except Exception as e:
+        logger.error(f"BeautifulSoup failed to parse cleaned notes, falling back to plain text. Error: {e}")
+        # If even BeautifulSoup fails, fall back to the safest possible text.
+        return re.sub(r'<[^>]*>', '', text)
