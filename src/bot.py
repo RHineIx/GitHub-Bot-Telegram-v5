@@ -30,10 +30,6 @@ from src.modules.telegram.services.notification_service import (
 logger = logging.getLogger(__name__)
 
 
-# REMOVED: The local definition of notification_worker has been removed
-# to eliminate code duplication. It is now imported from notification_service.py.
-
-
 async def run():
     log_handler_enabled = setup_logging(settings)
     start_time = datetime.now(timezone.utc)
