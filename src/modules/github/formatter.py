@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from src.utils import format_time_ago
+from src.utils import format_time_ago, clean_release_notes
 from .models import Repository
 
 logger = logging.getLogger(__name__)
@@ -73,12 +73,15 @@ class RepoFormatter:
 
         # Add the release notes if they exist, inside an expandable blockquote
         if release_node.description:
-            # Truncate to a reasonable length to avoid hitting Telegram limits
-            notes = release_node.description[:1000]
-            if len(release_node.description) > 1000:
-                notes += "..."
+            # Clean the markdown from the description before displaying it
+            notes = clean_release_notes(release_node.description)
             
-            message_parts.append(f"\n<blockquote expandable>📝 {notes}</blockquote>")
+            # Truncate to a reasonable length to avoid hitting Telegram limits
+            if len(notes) > 1000:
+                notes = notes[:997] + "..."
+            
+            message_parts.append(f"\n<blockquote expandable>📝 <b>Release Notes:</b>\n{notes}</blockquote>")
+
         repo_name_hashtag = repo.name_with_owner.split('/')[-1].replace('-', '_').capitalize()
         message_parts.append(f"\n#NewRelease - #Releases{repo_name_hashtag}")
 

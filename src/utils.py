@@ -114,3 +114,53 @@ async def scrape_social_preview_image(
     except Exception as e:
         logger.error(f"Exception while scraping {url} for social preview: {e}")
     return None
+
+def clean_release_notes(text: str) -> str:
+    """
+    Cleans and formats GitHub release notes from Markdown to a Telegram-friendly HTML format.
+    """
+    if not text:
+        return ""
+
+    # to handle nested formatting correctly.
+    replacements = [
+        # --- Block-level elements first ---
+        # Remove GitHub-specific alert syntax like [!NOTE]
+        (r'\[![^\]]+\]\s*', ''),
+        # Convert Markdown headings (e.g., ### Title) to bold
+        (r'^\s*#{1,6}\s*(.+?)\s*#*\s*$', r'<b>\1</b>'),
+        # Convert Markdown list items (* or -) to bullet points (•)
+        (r'^\s*[\*\-]\s+', '• '),
+        # Remove blockquote markers (>)
+        (r'^\s*>\s?', ''),
+        # Remove horizontal rules (---, ***, etc.)
+        (r'^\s*[-*_]{3,}\s*$', ''),
+
+        # --- Inline elements second ---
+        # Convert Markdown links [text](url) to HTML links
+        (r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>'),
+        
+        # --- Text formatting (order is critical) ---
+        # Bold and Italic (e.g., ***text***)
+        (r'\*{3}(.+?)\*{3}', r'<b><i>\1</i></b>'),
+        (r'_{3}(.+?)_{3}', r'<b><i>\1</i></b>'),
+        
+        # Bold (e.g., **text**)
+        (r'\*{2}(.+?)\*{2}', r'<b>\1</b>'),
+        (r'_{2}(.+?)_{2}', r'<b>\1</b>'),
+        
+        # Italic (e.g., *text*)
+        (r'\*(.+?)\*', r'<i>\1</i>'),
+        (r'_(.+?)_', r'<i>\1</i>'),
+        
+        # Strikethrough (e.g., ~~text~~)
+        (r'~~(.+?)~~', r'<s>\1</s>'),
+    ]
+
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.MULTILINE)
+
+    # Clean up excessive newlines, but keep double newlines for paragraphs
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    
+    return text.strip()
