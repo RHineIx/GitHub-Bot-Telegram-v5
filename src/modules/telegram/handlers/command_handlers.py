@@ -412,9 +412,12 @@ async def handle_track_command(message: types.Message, github_api: GitHubAPI, db
             parse_mode="Markdown"
         )
     else:
+        # The help text now includes the requested link
         await wait_msg.edit_text(
             "**No GitHub Lists Found**\n\n"
             "You don't seem to have any Lists on your GitHub Stars page. Create one first, then run this command again.\n\n"
-            "You can create a list by going to your Stars, clicking the 'Lists' tab, and then 'Create list'.",
-            parse_mode="Markdown"
+            "You can create a list by going to your Stars, clicking the 'Lists' tab, and then 'Create list'.\n\n"
+            "For more details, see the [official GitHub documentation](https://docs.github.com/en/get-started/exploring-projects-on-github/saving-repositories-with-stars).",
+            parse_mode="Markdown",
+            disable_web_page_preview=True
         )
