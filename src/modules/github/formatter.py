@@ -82,8 +82,8 @@ class RepoFormatter:
             notes = clean_release_notes(release_node.description)
             
             # Truncate to a reasonable length to avoid hitting Telegram limits
-            if len(notes.encode('utf-8')) > 2000:
-                notes = notes.encode('utf-8')[:1997].decode('utf-8', errors='ignore') + "..."
+            if len(notes.encode('utf-8')) > 1000:
+                notes = notes.encode('utf-8')[:997].decode('utf-8', errors='ignore') + "..."
             
             message_parts.append(f"\n<blockquote expandable>📝 <b>Release Notes:</b>\n{notes}</blockquote>")
 

@@ -54,7 +54,8 @@ def format_time_ago(timestamp_str: str) -> str:
         years = days // 365
         unit = f"{years} year" + ("s" if years > 1 else "")
         return template.format(unit)
-    
+
+
 def format_release_date(dt: datetime) -> str:
     """
     Formats a datetime object into a detailed string with absolute and relative time.
@@ -132,13 +133,19 @@ async def scrape_social_preview_image(
         logger.error(f"Exception while scraping {url} for social preview: {e}")
     return None
 
+
 def clean_release_notes(text: str) -> str:
     """
     Cleans and formats GitHub release notes from Markdown to a Telegram-friendly format.
-    This version corrects the order of operations for list items and headings.
+    This version corrects the order of operations and strips unsupported HTML.
     """
     if not text:
         return ""
+
+    # Strip unsupported HTML tags first, leaving only Telegram's supported subset.
+    allowed_tags = ['b', 'i', 'a', 's', 'code', 'pre']
+    pattern = r'</?(?!(' + '|'.join(allowed_tags) + r'))\w+[^>]*>'
+    text = re.sub(pattern, '', text, flags=re.IGNORECASE)
 
     text = text.replace('\r\n', '\n').replace('\r', '\n').strip()
     lines = text.splitlines()
@@ -151,27 +158,24 @@ def clean_release_notes(text: str) -> str:
             cleaned_lines.append("")
             continue
         
-        # --- Corrected Logic ---
-        
         # Step 1: Check for a list marker and temporarily store it.
         list_marker = ""
         match = re.match(r'^\s*([\-\*]|\d+\.)\s+', line)
         if match:
-            # It's a list item. Use a clean bullet and strip the original marker.
             list_marker = "• "
-            line = line[match.end():] # Remove the marker (e.g., "* " or "1. ")
+            line = line[match.end():]
 
-        # Step 2: Now that the marker is gone, process headings on the rest of the line.
+        # Step 2: Now that the marker is gone, process headings.
         line = re.sub(r'^\s*#{1,6}\s*(.+?)\s*#*$', r'<b>\1</b>', line)
 
-        # Step 3: Process other inline formatting like bold, code, and links.
+        # Step 3: Process other inline formatting.
         line = re.sub(r'\*{2}(.+?)\*{2}', r'<b>\1</b>', line)
         line = re.sub(r'`([^`]+)`', r'<code>\1</code>', line)
         line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', line)
 
         # Step 4: Handle special GitHub links and other patterns.
-        line = re.sub(r'\[![^\]]+\]\s*', '', line) # Remove alerts
-        line = re.sub(r'^\s*>\s?', '', line) # Remove blockquotes
+        line = re.sub(r'\[![^\]]+\]\s*', '', line)
+        line = re.sub(r'^\s*>\s?', '', line)
 
         match = re.search(r'https://github\.com/.+/(issues|pull)/(\d+)', line)
         if match:
@@ -189,7 +193,7 @@ def clean_release_notes(text: str) -> str:
             )
             line = f"📄 <b>{line}</b>"
             
-        # Step 5: Add the clean list marker back to the front of the processed line.
+        # Step 5: Add the clean list marker back to the front.
         cleaned_lines.append(f"{list_marker}{line}".strip())
 
     formatted = '\n'.join(cleaned_lines)
