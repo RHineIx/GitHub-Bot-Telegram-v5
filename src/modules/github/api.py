@@ -42,6 +42,7 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
         tagName
         url
         description
+        publishedAt
       }
     }
     # --- The languages query is now more detailed ---

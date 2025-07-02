@@ -69,39 +69,61 @@ async def handle_status(
     start_time: datetime,
     scheduler: DigestScheduler,
 ):
-    # This command already has the token check, which is great.
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
     
     wait_msg = await message.answer("🔍 Fetching status...")
     try:
+        # Gather all status information concurrently
+        tracked_list_slug = await db_manager.get_tracked_list()
+        owner_login = await github_api.get_viewer_login() if tracked_list_slug else None
+        
         tasks = {
             "rate_limit_data": github_api.get_rate_limit(),
             "viewer_login": github_api.get_viewer_login(),
             "destinations": db_manager.get_all_destinations(),
             "release_dests": db_manager.get_all_release_destinations(),
             "is_paused": db_manager.is_monitoring_paused(),
+            "digest_queue_count": db_manager.get_digest_queue_count(),
+            # Fetch repo count only if a list and owner are available
+            "tracked_repo_count": github_api.get_repos_in_list_by_scraping(owner_login, tracked_list_slug) 
+                                   if owner_login and tracked_list_slug else asyncio.sleep(0, result=[]),
         }
+        
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
         res = {
             key: val
             for key, val in zip(tasks.keys(), results)
             if not isinstance(val, Exception)
         }
+        
+        # Format the status message
         uptime = datetime.now(timezone.utc) - start_time
         uptime_str = str(uptime - timedelta(microseconds=uptime.microseconds))
+        
         status_lines = [f"📊 **Bot Status**\n\n🕒 *Uptime:* `{uptime_str}`"]
+        
         if login := res.get("viewer_login"):
             status_lines.append(f"👤 *GitHub Account:* `@{login}`")
+            
         if rate_limit_data := res.get("rate_limit_data"):
             if rate_limit := rate_limit_data.rate_limit:
                 reset_time = format_time_ago(rate_limit.reset_at.isoformat())
                 status_lines.append(
                     f"📈 *API Limit:* `{rate_limit.remaining}/{rate_limit.limit}` (resets {reset_time})"
                 )
+                
         monitoring_status = "Paused ⏸️" if res.get("is_paused") else "Active ✅"
         status_lines.append(f"📢 *Monitoring:* `{monitoring_status}`")
+        
+        if tracked_list_slug:
+            repo_count = len(res.get("tracked_repo_count", []))
+            status_lines.append(f"⏭️ *Tracked List:* `{tracked_list_slug}` ({repo_count} repos)")
+        
+        digest_count = res.get("digest_queue_count", 0)
+        status_lines.append(f"📬 *Digest Queue:* `{digest_count}` items pending")
+        
         ai_status = "Enabled" if settings.gemini_api_key else "Disabled (No API Key)"
         if settings.gemini_api_key:
             db_ai_status = (
@@ -111,17 +133,21 @@ async def handle_status(
             )
             ai_status = f"Enabled ({db_ai_status})"
         status_lines.append(f"🤖 *AI Features:* `{ai_status}`")
+        
         if next_run := scheduler.get_next_run_time():
             status_lines.append(
                 f"🗓️ *Next Digest Job:* {format_time_ago(next_run.isoformat())}"
             )
+            
         status_lines.extend(
             [
                 f"⭐ *Star Destinations:* `{len(res.get('destinations', []))}` configured.",
                 f"🚀 *Release Destinations:* `{len(res.get('release_dests', []))}` configured.",
             ]
         )
+        
         await wait_msg.edit_text("\n".join(status_lines), parse_mode="Markdown")
+        
     except Exception as e:
         logger.error(f"Error fetching status: {e}", exc_info=True)
         await wait_msg.edit_text("❌ An error occurred while fetching status.")

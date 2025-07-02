@@ -30,6 +30,7 @@ class ReleaseNode(BaseModel):
     tag_name: str = Field(..., alias="tagName")
     url: str
     description: Optional[str] = None
+    published_at: Optional[datetime] = Field(None, alias="publishedAt")
 
 
 class LatestRelease(BaseModel):

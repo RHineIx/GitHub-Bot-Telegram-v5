@@ -54,6 +54,23 @@ def format_time_ago(timestamp_str: str) -> str:
         years = days // 365
         unit = f"{years} year" + ("s" if years > 1 else "")
         return template.format(unit)
+    
+def format_release_date(dt: datetime) -> str:
+    """
+    Formats a datetime object into a detailed string with absolute and relative time.
+    Example: 02.07.25 at 02:20 PM ( 2 days ago )
+    """
+    if not isinstance(dt, datetime):
+        return "N/A"
+    
+    # Format the absolute date and time part: dd.mm.yy at H:M AM/PM
+    absolute_str = dt.strftime("%d.%m.%y at %I:%M %p")
+    
+    # Get the relative time part using our existing function
+    relative_str = format_time_ago(dt)
+    
+    # Combine them into the desired format
+    return f"{absolute_str} ( {relative_str} )"
 
 
 def extract_media_from_readme(markdown_text: str, repo: Repository) -> List[str]:
@@ -117,50 +134,64 @@ async def scrape_social_preview_image(
 
 def clean_release_notes(text: str) -> str:
     """
-    Cleans and formats GitHub release notes from Markdown to a Telegram-friendly HTML format.
+    Cleans and formats GitHub release notes from Markdown to a Telegram-friendly format.
+    This version corrects the order of operations for list items and headings.
     """
     if not text:
         return ""
 
-    # to handle nested formatting correctly.
-    replacements = [
-        # --- Block-level elements first ---
-        # Remove GitHub-specific alert syntax like [!NOTE]
-        (r'\[![^\]]+\]\s*', ''),
-        # Convert Markdown headings (e.g., ### Title) to bold
-        (r'^\s*#{1,6}\s*(.+?)\s*#*\s*$', r'<b>\1</b>'),
-        # Convert Markdown list items (* or -) to bullet points (•)
-        (r'^\s*[\*\-]\s+', '• '),
-        # Remove blockquote markers (>)
-        (r'^\s*>\s?', ''),
-        # Remove horizontal rules (---, ***, etc.)
-        (r'^\s*[-*_]{3,}\s*$', ''),
+    text = text.replace('\r\n', '\n').replace('\r', '\n').strip()
+    lines = text.splitlines()
+    cleaned_lines = []
 
-        # --- Inline elements second ---
-        # Convert Markdown links [text](url) to HTML links
-        (r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>'),
-        
-        # --- Text formatting (order is critical) ---
-        # Bold and Italic (e.g., ***text***)
-        (r'\*{3}(.+?)\*{3}', r'<b><i>\1</i></b>'),
-        (r'_{3}(.+?)_{3}', r'<b><i>\1</i></b>'),
-        
-        # Bold (e.g., **text**)
-        (r'\*{2}(.+?)\*{2}', r'<b>\1</b>'),
-        (r'_{2}(.+?)_{2}', r'<b>\1</b>'),
-        
-        # Italic (e.g., *text*)
-        (r'\*(.+?)\*', r'<i>\1</i>'),
-        (r'_(.+?)_', r'<i>\1</i>'),
-        
-        # Strikethrough (e.g., ~~text~~)
-        (r'~~(.+?)~~', r'<s>\1</s>'),
-    ]
+    for line in lines:
+        line = line.strip()
 
-    for pattern, replacement in replacements:
-        text = re.sub(pattern, replacement, text, flags=re.MULTILINE)
+        if not line:
+            cleaned_lines.append("")
+            continue
+        
+        # --- Corrected Logic ---
+        
+        # Step 1: Check for a list marker and temporarily store it.
+        list_marker = ""
+        match = re.match(r'^\s*([\-\*]|\d+\.)\s+', line)
+        if match:
+            # It's a list item. Use a clean bullet and strip the original marker.
+            list_marker = "• "
+            line = line[match.end():] # Remove the marker (e.g., "* " or "1. ")
 
-    # Clean up excessive newlines, but keep double newlines for paragraphs
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    
-    return text.strip()
+        # Step 2: Now that the marker is gone, process headings on the rest of the line.
+        line = re.sub(r'^\s*#{1,6}\s*(.+?)\s*#*$', r'<b>\1</b>', line)
+
+        # Step 3: Process other inline formatting like bold, code, and links.
+        line = re.sub(r'\*{2}(.+?)\*{2}', r'<b>\1</b>', line)
+        line = re.sub(r'`([^`]+)`', r'<code>\1</code>', line)
+        line = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', line)
+
+        # Step 4: Handle special GitHub links and other patterns.
+        line = re.sub(r'\[![^\]]+\]\s*', '', line) # Remove alerts
+        line = re.sub(r'^\s*>\s?', '', line) # Remove blockquotes
+
+        match = re.search(r'https://github\.com/.+/(issues|pull)/(\d+)', line)
+        if match:
+            number = match.group(2)
+            url = match.group(0)
+            if url not in line[:line.find(url)]:
+                line = re.sub(re.escape(url), f'<a href="{url}">#{number}</a>', line)
+
+        if 'full changelog' in line.lower():
+            line = re.sub(
+                r'(https://github\.com/\S+/compare/\S+)',
+                r'<a href="\1">View Full Changelog</a>',
+                line,
+                flags=re.IGNORECASE,
+            )
+            line = f"📄 <b>{line}</b>"
+            
+        # Step 5: Add the clean list marker back to the front of the processed line.
+        cleaned_lines.append(f"{list_marker}{line}".strip())
+
+    formatted = '\n'.join(cleaned_lines)
+    formatted = re.sub(r'\n{3,}', '\n\n', formatted)
+    return formatted.strip()

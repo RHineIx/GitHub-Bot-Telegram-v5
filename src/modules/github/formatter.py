@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from src.utils import format_time_ago, clean_release_notes
+from src.utils import format_time_ago, clean_release_notes, format_release_date
 from .models import Repository
 
 logger = logging.getLogger(__name__)
@@ -69,7 +69,12 @@ class RepoFormatter:
         message_parts = [
             f"🚀 <b>New Release: <a href='{repo.url}'>{repo.name_with_owner}</a></b>",
             f"└─ 🔖 <code>{release_node.tag_name}</code>"
+        
+        # Add the published date if it exists
         ]
+        if release_node.published_at:
+            published_str = format_release_date(release_node.published_at)
+            message_parts.append(f"└─ 🗓️ Published: {published_str}")
 
         # Add the release notes if they exist, inside an expandable blockquote
         if release_node.description:
@@ -77,8 +82,8 @@ class RepoFormatter:
             notes = clean_release_notes(release_node.description)
             
             # Truncate to a reasonable length to avoid hitting Telegram limits
-            if len(notes) > 1000:
-                notes = notes[:997] + "..."
+            if len(notes.encode('utf-8')) > 2000:
+                notes = notes.encode('utf-8')[:1997].decode('utf-8', errors='ignore') + "..."
             
             message_parts.append(f"\n<blockquote expandable>📝 <b>Release Notes:</b>\n{notes}</blockquote>")
 
