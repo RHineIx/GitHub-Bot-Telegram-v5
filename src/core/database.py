@@ -55,7 +55,7 @@ class DatabaseManager:
                 );
                 CREATE TABLE IF NOT EXISTS repository_release_state (
                     repo_full_name TEXT PRIMARY KEY,
-                    latest_release_tag TEXT NOT NULL,
+                    latest_release_node_id TEXT NOT NULL,
                     last_checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
                 CREATE TABLE IF NOT EXISTS release_destinations (
@@ -77,7 +77,6 @@ class DatabaseManager:
             logger.info("Database connection closed.")
 
     async def _set_state_value(self, key: str, value: Any) -> None:
-        # This method and all who call it are now protected by the lock
         async with self._write_lock:
             await self._connection.execute(
                 "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
@@ -86,7 +85,6 @@ class DatabaseManager:
             await self._connection.commit()
 
     async def _get_state_value(self, key: str) -> Optional[str]:
-        # Read operations do not need to be locked
         cursor = await self._connection.execute(
             "SELECT value FROM bot_state WHERE key = ?", (key,)
         )
@@ -240,27 +238,27 @@ class DatabaseManager:
         row = await cursor.fetchone()
         return row[0] if row else None
 
-    async def get_repository_release_state(self, repo_full_name: str) -> Optional[str]:
-        """Gets the last known release tag for a specific repository."""
+    async def get_repository_release_id(self, repo_full_name: str) -> Optional[str]:
+        """Gets the last known release node_id for a specific repository."""
         cursor = await self._connection.execute(
-            "SELECT latest_release_tag FROM repository_release_state WHERE repo_full_name = ?",
+            "SELECT latest_release_node_id FROM repository_release_state WHERE repo_full_name = ?",
             (repo_full_name,),
         )
         row = await cursor.fetchone()
         return row[0] if row else None
 
-    async def update_repository_release_state(self, repo_full_name: str, tag: str) -> None:
-        """Adds or updates the latest known release tag for a repository."""
+    async def update_repository_release_id(self, repo_full_name: str, node_id: str) -> None:
+        """Adds or updates the latest known release node_id for a repository."""
         async with self._write_lock:
             await self._connection.execute(
                 """
-                INSERT INTO repository_release_state (repo_full_name, latest_release_tag, last_checked_at)
+                INSERT INTO repository_release_state (repo_full_name, latest_release_node_id, last_checked_at)
                 VALUES (?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(repo_full_name) DO UPDATE SET
-                    latest_release_tag = excluded.latest_release_tag,
+                    latest_release_node_id = excluded.latest_release_node_id,
                     last_checked_at = excluded.last_checked_at
                 """,
-                (repo_full_name, tag),
+                (repo_full_name, node_id),
             )
             await self._connection.commit()
 

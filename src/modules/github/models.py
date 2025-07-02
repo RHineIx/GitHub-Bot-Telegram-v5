@@ -26,6 +26,7 @@ class Languages(BaseModel):
 
 
 class ReleaseNode(BaseModel):
+    id: str
     tag_name: str = Field(..., alias="tagName")
     url: str
     description: Optional[str] = None

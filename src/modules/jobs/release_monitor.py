@@ -101,21 +101,20 @@ class ReleaseMonitor:
             if not (repo_data and repo_data.repository and repo_data.repository.latest_release and repo_data.repository.latest_release.nodes):
                 return # No release information found for this repo.
 
-            latest_tag = repo_data.repository.latest_release.nodes[0].tag_name
-            known_tag = await self.db_manager.get_repository_release_state(repo_name)
+            latest_release = repo_data.repository.latest_release.nodes[0]
+            known_id = await self.db_manager.get_repository_release_id(repo_name)
 
             # If the tag is new, queue a notification.
-            if known_tag != latest_tag:
-                logger.info(f"New release found for {repo_name}! Old: {known_tag}, New: {latest_tag}. Queueing notification.")
-                # Queue the notification with the "release" type
+            if known_id != latest_release.id:
+                logger.info(f"New release found for {repo_name}! Old ID: {known_id}, New ID: {latest_release.id}. Queueing notification.")
                 await self.repo_queue.put(("release", repo_name))
             
             # If this is the first time seeing the repo, establish a baseline.
-            if not known_tag:
-                logger.info(f"Establishing baseline for {repo_name} with release {latest_tag}.")
+            if not known_id:
+                logger.info(f"Establishing baseline for {repo_name} with release {latest_release.tag_name} (ID: {latest_release.id}).")
 
             # Update the database with the latest known release tag.
-            await self.db_manager.update_repository_release_state(repo_name, latest_tag)
+            await self.db_manager.update_repository_release_id(repo_name, latest_release.id)
 
         except GitHubAPIError as e:
             logger.error(f"A GitHub API error occurred during release check for {repo_name}: {e}")

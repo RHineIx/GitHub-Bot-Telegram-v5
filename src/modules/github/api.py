@@ -38,6 +38,7 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
     }
     latestRelease: releases(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
+        id
         tagName
         url
         description

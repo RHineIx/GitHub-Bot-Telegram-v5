@@ -48,8 +48,8 @@ async def handle_set_tracking_list(
                 and full_repo_data.repository.latest_release
                 and full_repo_data.repository.latest_release.nodes
             ):
-                latest_tag = full_repo_data.repository.latest_release.nodes[0].tag_name
-                await db_manager.update_repository_release_state(repo_full_name, latest_tag)
+                latest_release_id = full_repo_data.repository.latest_release.nodes[0].id
+                await db_manager.update_repository_release_id(repo_full_name, latest_release_id)
                 baselined_count += 1
     
     repo_count = len(repo_full_names) if repo_full_names else 0
