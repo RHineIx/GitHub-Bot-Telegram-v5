@@ -240,6 +240,25 @@ class NotificationService:
             # Handle errors from the Telegram API.
             error_message = str(e).lower()
             repo_link = f"<a href='https://github.com/{repo_full_name}'>{repo_full_name}</a>"
+
+            if "wrong type of the web page content" in error_message or "failed to get http url content" in error_message:
+                logger.warning(
+                    f"Could not send media for {repo_link} due to URL error: {e}. Retrying as text-only."
+                )
+                try:
+                    # Retry sending the notification as a text-only message.
+                    # We disable web page preview here to prevent the same error from happening again on a link in the text.
+                    await self.bot.send_message(
+                        chat_id,
+                        caption,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                        message_thread_id=thread_id,
+                        reply_markup=reply_markup,
+                    )
+                except Exception as fallback_e:
+                    logger.error(f"Fallback text-only notification also failed for {repo_link}: {fallback_e}")
+                return # Stop further processing for this error
             
             # If the error is permanent (e.g., bot kicked), remove the destination.
             if any(p_error in error_message for p_error in PERMANENT_TELEGRAM_ERRORS):

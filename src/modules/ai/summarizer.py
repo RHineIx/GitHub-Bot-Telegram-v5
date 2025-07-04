@@ -55,7 +55,7 @@ class AISummarizer:
             2.  **Exclusions:** You MUST ignore sections about installation, configuration, donation, licensing, and usage examples. Focus only on what the project IS and what it DOES.
             3.  **Neutral, Technical Tone:** Preserve the original text's tone. Do not add marketing fluff or enthusiastic language.
             4.  **Formatting:** The entire output MUST be plain text. Use line breaks for readability. Do NOT use any Markdown or HTML.
-            5.  **Strict Character Limit:** The final output MUST NOT EXCEED 650 characters.
+            5.  **Strict Character Limit:** The final output MUST NOT EXCEED 680 characters.
 
             **Original README content to process:**
             ---

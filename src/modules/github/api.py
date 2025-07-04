@@ -39,6 +39,9 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
     licenseInfo {
       name
     }
+    issues(states: OPEN) {
+      totalCount
+    }
     repositoryTopics(first: 4) {
       nodes {
         topic {

@@ -27,10 +27,18 @@ class RepoFormatter:
         ai_summary: Optional[str] = None,
     ) -> str:
         """Constructs the main HTML message for a repository preview from GraphQL data."""
+
+        # Use AI summary if available, otherwise fall back to the repo's description.
         description = ai_summary or repo.description or "No description available."
+
+        # This protects against both long repo descriptions and unexpectedly long AI summaries.
+        if len(description) > 700:
+            description = description[:697] + "..."
+            
 
         stars = RepoFormatter._format_number(repo.stargazer_count)
         forks = RepoFormatter._format_number(repo.fork_count)
+        issues_count = repo.issues.total_count if repo.issues else 0
 
         last_updated_str = f'{repo.pushed_at.strftime("%Y-%m-%d")} ({format_time_ago(repo.pushed_at.isoformat())})'
 
@@ -59,8 +67,8 @@ class RepoFormatter:
         message = (
             f"📦 <a href='{repo.url}'>{repo.name_with_owner}</a>\n\n"
             f"<blockquote expandable>📝 {description}</blockquote>\n\n"
-            f"⭐ <b>Stars:</b> {stars} | 🍴 <b>Forks:</b> {forks}\n"
-            f"{license_text}\n\n"
+            f"⭐ <b>Stars:</b> <code>{stars}</code> | 🍴 <b>Forks:</b> <code>{forks}</code> | 🪲 Open Issues: <code>{issues_count}</code>\n\n"
+            f"{license_text}\n"
             f"🚀 <b>Latest Release:</b> {release_info}\n"
             f"⏳ <b>Last updated:</b> {last_updated_str}\n"
             f"💻 <b>Langs:</b> {languages_text}\n\n"

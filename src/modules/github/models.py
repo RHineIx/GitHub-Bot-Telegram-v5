@@ -37,6 +37,9 @@ class TopicNode(BaseModel):
 class RepositoryTopics(BaseModel):
     nodes: List[TopicNode]
 
+class IssuesConnection(BaseModel):
+    total_count: int = Field(..., alias="totalCount")
+
 
 class ReleaseNode(BaseModel):
     id: str
@@ -73,6 +76,9 @@ class Repository(BaseModel):
     latest_release: Optional[LatestRelease] = Field(None, alias="latestRelease")
     languages: Optional[Languages] = None
     repository_topics: Optional[RepositoryTopics] = Field(None, alias="repositoryTopics")
+    issues: IssuesConnection
+    url: str
+    pushed_at: datetime = Field(..., alias="pushedAt")
 
 
 class NotificationRepoData(BaseModel):
