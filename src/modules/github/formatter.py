@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from src.utils import format_time_ago, clean_release_notes, format_release_date
+from src.utils import clean_release_notes, format_release_date
 from .models import Repository
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,7 @@ class RepoFormatter:
         forks = RepoFormatter._format_number(repo.fork_count)
         issues_count = repo.issues.total_count if repo.issues else 0
 
-        last_updated_str = f'{repo.pushed_at.strftime("%Y-%m-%d")} ({format_time_ago(repo.pushed_at.isoformat())})'
+        last_updated_str = f'{repo.pushed_at.strftime("%Y-%m-%d")}'
 
         # Safely access the latest release from the nested model
         release_info = "No official releases"
@@ -61,13 +61,13 @@ class RepoFormatter:
         # Format license
         license_text = ""
         if repo.license_info:
-            license_text = f"📜 <b>License:</b> {repo.license_info.name}\n"
+            license_text = f"📜 <b>License:</b> <code>{repo.license_info.name}</code>\n"
 
         # Build the main part of the message
         message = (
             f"📦 <a href='{repo.url}'>{repo.name_with_owner}</a>\n\n"
             f"<blockquote expandable>📝 {description}</blockquote>\n\n"
-            f"⭐ <b>Stars:</b> <code>{stars}</code> | 🍴 <b>Forks:</b> <code>{forks}</code> | 🪲 Open Issues: <code>{issues_count}</code>\n\n"
+            f"⭐ <b>Stars:</b> <code>{stars}</code> | 🍴 <b>Forks:</b> <code>{forks}</code> | 🪲 <b>Open Issues:</b> <code>{issues_count}</code>\n\n"
             f"{license_text}\n"
             f"🚀 <b>Latest Release:</b> {release_info}\n"
             f"⏳ <b>Last updated:</b> {last_updated_str}\n"
