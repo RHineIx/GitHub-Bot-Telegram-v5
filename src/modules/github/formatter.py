@@ -50,15 +50,34 @@ class RepoFormatter:
                 lang_texts.append(f"#{lang_name} (<code>{percentage:.1f}%</code>)")
             languages_text = " ".join(lang_texts)
 
-        return (
+        # Format license
+        license_text = ""
+        if repo.license_info:
+            license_text = f"📜 <b>License:</b> {repo.license_info.name}\n"
+
+        # Build the main part of the message
+        message = (
             f"📦 <a href='{repo.url}'>{repo.name_with_owner}</a>\n\n"
             f"<blockquote expandable>📝 {description}</blockquote>\n\n"
-            f"⭐ <b>Stars:</b> {stars} | 🍴 <b>Forks:</b> {forks}\n\n"
+            f"⭐ <b>Stars:</b> {stars} | 🍴 <b>Forks:</b> {forks}\n"
+            f"{license_text}\n\n"
             f"🚀 <b>Latest Release:</b> {release_info}\n"
             f"⏳ <b>Last updated:</b> {last_updated_str}\n"
             f"💻 <b>Langs:</b> {languages_text}\n\n"
             f"<a href='{repo.url}'>🔗 View on GitHub</a>"
-        ).strip()
+        )
+
+        # --- Format and add topics at the end ---
+        if repo.repository_topics and repo.repository_topics.nodes:
+            # Replace hyphens with underscores and prepend a hashtag
+            topic_hashtags = [
+                f"#{t.topic.name.replace('-', '_')}" 
+                for t in repo.repository_topics.nodes
+            ]
+            # Add a double newline for spacing, then join the topics
+            message += "\n\n" + " ".join(topic_hashtags)
+
+        return message.strip()
 
     @staticmethod
     def format_release_notification(repo: Repository) -> str:

@@ -24,6 +24,19 @@ class Languages(BaseModel):
     total_size: int = Field(..., alias="totalSize")
     edges: List[LanguageEdge]
 
+class LicenseInfo(BaseModel):
+    name: str
+
+
+class Topic(BaseModel):
+    name: str
+
+class TopicNode(BaseModel):
+    topic: Topic
+
+class RepositoryTopics(BaseModel):
+    nodes: List[TopicNode]
+
 
 class ReleaseNode(BaseModel):
     id: str
@@ -48,7 +61,8 @@ class DefaultBranchRef(BaseModel):
 
 class Repository(BaseModel):
     name_with_owner: str = Field(..., alias="nameWithOwner")
-    full_name: str = Field(..., alias="nameWithOwner")  # For compatibility
+    full_name: str = Field(..., alias="nameWithOwner")
+    license_info: Optional[LicenseInfo] = Field(None, alias="licenseInfo")
     description: Optional[str] = None
     stargazer_count: int = Field(..., alias="stargazerCount")
     fork_count: int = Field(..., alias="forkCount")
@@ -58,6 +72,7 @@ class Repository(BaseModel):
     owner: Owner
     latest_release: Optional[LatestRelease] = Field(None, alias="latestRelease")
     languages: Optional[Languages] = None
+    repository_topics: Optional[RepositoryTopics] = Field(None, alias="repositoryTopics")
 
 
 class NotificationRepoData(BaseModel):

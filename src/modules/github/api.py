@@ -36,7 +36,17 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
       login
       avatarUrl
     }
-    latestRelease: releases(first: 1, orderBy: {field: CREATED_AT, direction: DESC}) {
+    licenseInfo {
+      name
+    }
+    repositoryTopics(first: 4) {
+      nodes {
+        topic {
+          name
+        }
+      }
+    }
+    latestRelease: releases(first: 5, orderBy: {field: CREATED_AT, direction: DESC}) {
       nodes {
         id
         tagName
@@ -45,7 +55,6 @@ query GetRepositoryNotificationData($owner: String!, $name: String!) {
         publishedAt
       }
     }
-    # --- The languages query is now more detailed ---
     languages(first: 3, orderBy: {field: SIZE, direction: DESC}) {
       totalSize
       edges {
@@ -66,7 +75,7 @@ query GetUserRepositoryListsWithID {
     lists(first: 20) {
       edges {
         node {
-          id # <-- The crucial addition
+          id
           name
           slug
         }
