@@ -241,7 +241,12 @@ class NotificationService:
             error_message = str(e).lower()
             repo_link = f"<a href='https://github.com/{repo_full_name}'>{repo_full_name}</a>"
 
-            if "wrong type of the web page content" in error_message or "failed to get http url content" in error_message:
+            if (
+                "wrong type of the web page content" in error_message or
+                "failed to get http url content" in error_message or
+                "webpage_curl_failed" in error_message or
+                "webpage_media_empty" in error_message
+            ):
                 logger.warning(
                     f"Could not send media for {repo_link} due to URL error: {e}. Retrying as text-only."
                 )
