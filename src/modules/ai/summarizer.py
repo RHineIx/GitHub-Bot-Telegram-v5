@@ -92,7 +92,7 @@ class AISummarizer:
             1.  **High-Value Sections:** Prioritize media found under headings like "Preview", "Demo", "Screenshots", "Showcase", "Features", or "How it works".
             2.  **Media Type Preference:** Prefer videos (.mp4, .webm) over images (.png, .jpg) as they are more descriptive.
             3.  **Content is Key:** Choose media that clearly demonstrates the project's purpose or user interface.
-            4.  **Exclusions:** IGNORE media from sections like "Sponsors", "Contributors", "License", or "Badges".
+            4.  **Exclusions:** IGNORE media from sections like "Sponsors", "Contributors", "License", or "Badges". Also ignore non-representative formats such as SVG, GIF, or icons.
             5.  **Hosting Services:** AVOID links from file-hosting websites like MediaFire, Dropbox, Google Drive, Mega.nz, etc. Prioritize direct links to media files (e.g., raw GitHub content, Imgur) or embedded videos from platforms like YouTube.
 
             **CRITICAL OUTPUT FORMAT:**

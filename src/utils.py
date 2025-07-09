@@ -2,7 +2,7 @@
 
 import logging
 import re
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
 import aiohttp
@@ -210,3 +210,18 @@ def clean_release_notes(text: str) -> str:
         logger.error(f"BeautifulSoup failed to parse cleaned notes, falling back to plain text. Error: {e}")
         # If even BeautifulSoup fails, fall back to the safest possible text.
         return re.sub(r'<[^>]*>', '', text)
+
+
+
+EXCLUDED_KEYWORDS = (
+    "badge", "sponsor", "donate", "logo", "logo.svg", "gif", "svg", "extension",
+    "contributor", "shields.io", "badgen.net", "vercel.svg",
+    "netlify.com/img/deploy", "app.codacy.com", "lgtm.com",
+)
+
+def is_url_excluded(url: str) -> bool:
+    """
+    Checks if a URL should be excluded based on a predefined list of keywords.
+    Returns True if the URL contains any excluded keyword, otherwise False.
+    """
+    return any(kw in url.lower() for kw in EXCLUDED_KEYWORDS)

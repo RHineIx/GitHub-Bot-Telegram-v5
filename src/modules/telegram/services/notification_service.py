@@ -18,12 +18,12 @@ from src.utils import (
     extract_media_from_readme,
     get_media_info,
     scrape_social_preview_image,
+    is_url_excluded,
 )
 
 logger = logging.getLogger(__name__)
 
 # A set of error substrings that indicate a permanent issue with a destination chat.
-# If these are found in a Telegram API error, the destination will be removed.
 PERMANENT_TELEGRAM_ERRORS = {
     "chat not found",
     "bot was kicked",
@@ -163,7 +163,10 @@ class NotificationService:
     async def _build_media_group(
         self, urls: List[str]
     ) -> List[InputMediaPhoto | InputMediaVideo]:
-        """Validates media URLs and builds a list of Telegram media objects."""
+        """
+        Validates media URLs, filters them using a utility function,
+        and builds a list of Telegram media objects.
+        """
         media_group = []
         if not urls:
             return media_group
@@ -183,6 +186,12 @@ class NotificationService:
                     continue
                 
                 content_type, final_url = result
+
+                # Use the clean utility function for keyword filtering
+                if is_url_excluded(final_url):
+                    logger.info(f"URL '{final_url}' was filtered out by keyword exclusion.")
+                    continue
+
                 if "video" in content_type:
                     media_group.append(InputMediaVideo(media=final_url))
                 elif "image" in content_type:
@@ -252,7 +261,6 @@ class NotificationService:
                 )
                 try:
                     # Retry sending the notification as a text-only message.
-                    # We disable web page preview here to prevent the same error from happening again on a link in the text.
                     await self.bot.send_message(
                         chat_id,
                         caption,
