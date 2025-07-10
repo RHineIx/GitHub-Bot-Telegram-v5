@@ -141,12 +141,23 @@ class DatabaseManager:
     async def get_last_check_timestamp(self) -> Optional[str]:
         return await self._get_state_value("last_check_timestamp")
 
-    async def set_ai_features_enabled(self, enabled: bool) -> None:
-        await self._set_state_value("ai_features_enabled", "1" if enabled else "0")
+    async def set_ai_summary_enabled(self, enabled: bool) -> None:
+        """Sets whether the AI summary feature is enabled."""
+        await self._set_state_value("ai_summary_enabled", "1" if enabled else "0")
 
-    async def are_ai_features_enabled(self) -> bool:
-        enabled_state = await self._get_state_value("ai_features_enabled")
-        return enabled_state != "0"
+    async def is_ai_summary_enabled(self) -> bool:
+        """Checks if the AI summary feature is enabled. Defaults to True if not set."""
+        enabled_state = await self._get_state_value("ai_summary_enabled")
+        return enabled_state != "0" # Default to ON
+
+    async def set_ai_media_selection_enabled(self, enabled: bool) -> None:
+        """Sets whether the AI media selection feature is enabled."""
+        await self._set_state_value("ai_media_selection_enabled", "1" if enabled else "0")
+
+    async def is_ai_media_selection_enabled(self) -> bool:
+        """Checks if the AI media selection feature is enabled. Defaults to True if not set."""
+        enabled_state = await self._get_state_value("ai_media_selection_enabled")
+        return enabled_state != "0" # Default to ON
 
     async def update_digest_mode(self, mode: str) -> None:
         await self._set_state_value("digest_mode", mode)

@@ -14,13 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 def format_duration(seconds: int) -> str:
-    if seconds < 120:
+    """Formats a duration in seconds into a human-readable string."""
+    if seconds < 60:
         return f"{seconds} seconds"
-    minutes = seconds / 60
-    if minutes < 120:
-        return f"{seconds} seconds (~{minutes:.1f} minutes)"
-    hours = minutes / 60
-    return f"{seconds} seconds (~{hours:.1f} hours)"
+    
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes} minutes and {sec} seconds"
+        
+    hours, mins = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours} hours and {mins} minutes"
+        
+    days, hrs = divmod(hours, 24)
+    return f"{days} days and {hrs} hours"
 
 
 def format_time_ago(timestamp_str: str) -> str:
@@ -64,13 +71,9 @@ def format_release_date(dt: datetime) -> str:
     if not isinstance(dt, datetime):
         return "N/A"
     
-    # Format the absolute date and time part: dd.mm.yy at H:M AM/PM
     absolute_str = dt.strftime("%d.%m.%y at %I:%M %p")
-    
-    # Get the relative time part using our existing function
     relative_str = format_time_ago(dt)
     
-    # Combine them into the desired format
     return f"{absolute_str} ({relative_str})"
 
 
@@ -91,11 +94,7 @@ def extract_media_from_readme(markdown_text: str, repo: Repository) -> List[str]
         if url.startswith("http"):
             absolute_urls.append(url)
         else:
-            clean_path = url
-            if clean_path.startswith("./"):
-                clean_path = clean_path[2:]
-            elif clean_path.startswith("/"):
-                clean_path = clean_path[1:]
+            clean_path = url.lstrip("./").lstrip("/")
             absolute_urls.append(
                 f"https://raw.githubusercontent.com/{repo.full_name}/{repo.default_branch_ref.name}/{clean_path}"
             )
@@ -142,7 +141,6 @@ def clean_release_notes(text: str) -> str:
     if not text:
         return ""
     
-    # Strip unsupported HTML tags first
     allowed_tags = ['b', 'i', 'a', 's', 'code', 'pre']
     pattern = r'</?(?!(' + '|'.join(allowed_tags) + r'))\w+[^>]*>'
     text = re.sub(pattern, '', text, flags=re.IGNORECASE)
@@ -193,35 +191,25 @@ def clean_release_notes(text: str) -> str:
     formatted = '\n'.join(cleaned_lines)
     formatted = re.sub(r'\n{3,}', '\n\n', formatted).strip()
 
-    # --- sanitization step using BeautifulSoup ---
-    # This robustly fixes any malformed or improperly nested tags
-    # that our regex substitutions might have accidentally created.
     try:
-        # Parse the generated HTML fragment.
         soup = BeautifulSoup(formatted, 'html.parser')
-        
-        # Convert it back to a string. BeautifulSoup automatically corrects errors.
-        # .decode_contents() gets the inner HTML without the <html><body> wrapper.
         clean_html = soup.decode_contents()
-        
-        # cleanup of any extra whitespace introduced by the parser.
         return "\n".join(line.strip() for line in clean_html.splitlines()).strip()
     except Exception as e:
-        logger.error(f"BeautifulSoup failed to parse cleaned notes, falling back to plain text. Error: {e}")
-        # If even BeautifulSoup fails, fall back to the safest possible text.
+        logger.error(f"BeautifulSoup failed to parse cleaned notes, falling back. Error: {e}")
         return re.sub(r'<[^>]*>', '', text)
 
 
-
-EXCLUDED_KEYWORDS = (
+# Using a set is more idiomatic and slightly more performant for `in` checks.
+EXCLUDED_KEYWORDS = {
     "badge", "sponsor", "donate", "logo", "logo.svg", "gif", "svg", "extension",
     "contributor", "shields.io", "badgen.net", "vercel.svg",
     "netlify.com/img/deploy", "app.codacy.com", "lgtm.com",
-)
+}
 
 def is_url_excluded(url: str) -> bool:
     """
-    Checks if a URL should be excluded based on a predefined list of keywords.
+    Checks if a URL should be excluded based on a predefined set of keywords.
     Returns True if the URL contains any excluded keyword, otherwise False.
     """
     return any(kw in url.lower() for kw in EXCLUDED_KEYWORDS)

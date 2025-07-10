@@ -86,9 +86,10 @@ async def handle_status(
             "release_dests": db_manager.get_all_release_destinations(),
             "is_paused": db_manager.is_monitoring_paused(),
             "digest_queue_count": db_manager.get_digest_queue_count(),
-            # Fetch repo count only if a list and owner are available
             "tracked_repo_count": github_api.get_repos_in_list_by_scraping(owner_login, tracked_list_slug) 
                                    if owner_login and tracked_list_slug else asyncio.sleep(0, result=[]),
+            "ai_summary_on": db_manager.is_ai_summary_enabled(),
+            "ai_media_on": db_manager.is_ai_media_selection_enabled(),
         }
         
         results = await asyncio.gather(*tasks.values(), return_exceptions=True)
@@ -124,16 +125,14 @@ async def handle_status(
         digest_count = res.get("digest_queue_count", 0)
         status_lines.append(f"📬 *Digest Queue:* `{digest_count}` items pending")
         
-        ai_status = "Enabled" if settings.gemini_api_key else "Disabled (No API Key)"
         if settings.gemini_api_key:
-            db_ai_status = (
-                "Active ✅"
-                if await db_manager.are_ai_features_enabled()
-                else "Inactive ❌"
-            )
-            ai_status = f"Enabled ({db_ai_status})"
-        status_lines.append(f"🤖 *AI Features:* `{ai_status}`")
-        
+            summary_status = "Active ✅" if res.get("ai_summary_on") else "Inactive ❌"
+            media_status = "Active ✅" if res.get("ai_media_on") else "Inactive ❌"
+            status_lines.append(f"🤖 *AI Summary:* `{summary_status}`")
+            status_lines.append(f"🖼️ *AI Media Select:* `{media_status}`")
+        else:
+            status_lines.append("🤖 *AI Features:* `Disabled (No API Key)`")
+
         if next_run := scheduler.get_next_run_time():
             status_lines.append(
                 f"🗓️ *Next Digest Job:* {format_time_ago(next_run.isoformat())}"
@@ -213,7 +212,6 @@ async def process_token(
 
 @router.message(Command("removetoken"))
 async def handle_remove_token(message: types.Message, db_manager: DatabaseManager):
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -233,7 +231,6 @@ async def handle_add_destination(
     bot: Bot,
     db_manager: DatabaseManager,
 ):
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -270,7 +267,6 @@ async def handle_add_destination(
 async def handle_remove_destination(
     message: types.Message, command: CommandObject, db_manager: DatabaseManager
 ):
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -289,7 +285,6 @@ async def handle_remove_destination(
 
 @router.message(Command("list_dests"))
 async def handle_list_destinations(message: types.Message, db_manager: DatabaseManager):
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -311,7 +306,6 @@ async def handle_add_release_destination(
     db_manager: DatabaseManager,
 ):
     """Adds a destination for release notifications."""
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -347,7 +341,6 @@ async def handle_remove_release_destination(
     message: types.Message, command: CommandObject, db_manager: DatabaseManager
 ):
     """Removes a destination for release notifications."""
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -366,7 +359,6 @@ async def handle_remove_release_destination(
 @router.message(Command("list_dest_rels"))
 async def handle_list_release_destinations(message: types.Message, db_manager: DatabaseManager):
     """Lists all configured release destinations."""
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -395,7 +387,6 @@ async def handle_test_log(message: types.Message, settings: Settings):
 @router.message(Command("track"))
 async def handle_track_command(message: types.Message, github_api: GitHubAPI, db_manager: DatabaseManager):
     """Displays the menu for selecting a GitHub List to track for releases."""
-    # ADDED: Token check
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
         return
@@ -412,7 +403,6 @@ async def handle_track_command(message: types.Message, github_api: GitHubAPI, db
             parse_mode="Markdown"
         )
     else:
-        # The help text now includes the requested link
         await wait_msg.edit_text(
             "**No GitHub Lists Found**\n\n"
             "You don't seem to have any Lists on your GitHub Stars page. Create one first, then run this command again.\n\n"

@@ -1,11 +1,12 @@
 # src/modules/telegram/handlers/tracking_handlers.py
 
 import logging
+import asyncio
 from aiogram import F, Router, types
 from aiogram.exceptions import TelegramBadRequest
 
 from src.core.database import DatabaseManager
-from src.modules.github.api import GitHubAPI
+from src.modules.github.api import GitHubAPI, GitHubAPIError
 from src.modules.telegram.keyboards import TrackingCallback
 
 logger = logging.getLogger(__name__)
@@ -35,27 +36,30 @@ async def handle_set_tracking_list(
 
     # Use the new web scraping method
     repo_full_names = await github_api.get_repos_in_list_by_scraping(owner_login, list_slug)
-    
-    baselined_count = 0
-    if repo_full_names:
-        for repo_full_name in repo_full_names:
-            full_repo_data = await github_api.get_repository_data_for_notification(
-                *repo_full_name.split("/")
-            )
-            if (
-                full_repo_data
-                and full_repo_data.repository
-                and full_repo_data.repository.latest_release
-                and full_repo_data.repository.latest_release.nodes
-            ):
-                latest_release_id = full_repo_data.repository.latest_release.nodes[0].id
-                await db_manager.update_repository_release_id(repo_full_name, latest_release_id)
-                baselined_count += 1
-    
     repo_count = len(repo_full_names) if repo_full_names else 0
+    baselined_count = 0
+    
+    if repo_full_names:
+        # --- REFACTORED PART ---
+        # Use the new efficient method
+        latest_releases = await github_api.get_latest_releases_for_multiple_repos(repo_full_names)
+
+        if latest_releases is not None:
+            # Concurrently update the database for all repositories that have releases
+            update_tasks = [
+                db_manager.update_repository_release_id(repo_name, release_id)
+                for repo_name, release_id in latest_releases.items()
+            ]
+            await asyncio.gather(*update_tasks)
+            baselined_count = len(latest_releases)
+        else:
+            await call.message.edit_text("❌ Failed to fetch release data from GitHub API during baselining.")
+            return
+        # --- END REFACTOR ---
+    
     await call.message.edit_text(
         f"✅ **Tracking Enabled**\n\n"
-        f"Now monitoring the **{list_slug}** list ({repo_count} repos found via scraping).\n"
+        f"Now monitoring the **{list_slug}** list ({repo_count} repos found).\n"
         f"Established baseline for {baselined_count} repositories with existing releases.",
         parse_mode="Markdown"
     )

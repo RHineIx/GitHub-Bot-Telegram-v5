@@ -65,8 +65,8 @@ class ReleaseMonitor:
 
     async def _check_for_new_releases(self):
         """
-        Fetches the tracked list, scrapes the repositories, and checks for new
-        releases concurrently.
+        Fetches all repository releases in the tracked list in a single API call
+        and compares them against the stored state.
         """
         tracked_list_slug = await self.db_manager.get_tracked_list()
         if not tracked_list_slug:
@@ -84,64 +84,36 @@ class ReleaseMonitor:
             logger.warning(f"No repositories found while scraping list '{tracked_list_slug}'.")
             return
 
-        # Create a list of tasks to check each repository concurrently
-        check_tasks = [
-            self._process_single_repo_release(repo_name) for repo_name in repo_names
-        ]
-        # Execute all checks in parallel for better performance
-        await asyncio.gather(*check_tasks)
-
-    async def _process_single_repo_release(self, repo_name: str):
-        """
-        Helper method with upgraded logic to handle deleted releases.
-        It fetches the 5 latest releases to understand the context.
-        """
         try:
-            # 1. Fetch data for the 5 latest releases.
-            repo_data = await self.github_api.get_repository_data_for_notification(*repo_name.split('/'))
-            
-            # Exit if the repository has no releases at all.
-            if not (repo_data and repo_data.repository and repo_data.repository.latest_release and repo_data.repository.latest_release.nodes):
+            # --- REFACTORED CORE LOGIC ---
+            # 1. Fetch all latest release IDs in one call
+            latest_releases_from_api = await self.github_api.get_latest_releases_for_multiple_repos(repo_names)
+            if latest_releases_from_api is None:
+                logger.error("Failed to fetch multi-repo release data, skipping this check cycle.")
                 return
 
-            # 2. Get the list of recent releases and identify the absolute newest one.
-            latest_releases_from_api = repo_data.repository.latest_release.nodes
-            newest_release_on_api = latest_releases_from_api[0]
+            # 2. Process the results
+            for repo_name in repo_names:
+                new_release_id = latest_releases_from_api.get(repo_name)
+                
+                # If the repo has no releases on GitHub, there's nothing to do.
+                if not new_release_id:
+                    continue
 
-            # 3. Get the last release ID we have stored in our database.
-            known_id = await self.db_manager.get_repository_release_id(repo_name)
+                known_id = await self.db_manager.get_repository_release_id(repo_name)
 
-            # 4. If we have no record, establish a baseline with the newest release and do not notify.
-            if not known_id:
-                logger.info(f"Establishing baseline for {repo_name} with release {newest_release_on_api.tag_name} (ID: {newest_release_on_api.id}).")
-                await self.db_manager.update_repository_release_id(repo_name, newest_release_on_api.id)
-                return
+                # New repo with a release, establish baseline
+                if not known_id:
+                    logger.info(f"Establishing baseline for new repo {repo_name} with release ID {new_release_id}.")
+                    await self.db_manager.update_repository_release_id(repo_name, new_release_id)
+                # Release ID has changed, it's a new release
+                elif known_id != new_release_id:
+                    logger.info(f"New release found for {repo_name}! Old: {known_id}, New: {new_release_id}. Queueing.")
+                    await self.repo_queue.put(("release", repo_name))
+                    await self.db_manager.update_repository_release_id(repo_name, new_release_id)
 
-            # 5. If our known ID is the same as the newest one from the API, there's nothing to do.
-            if known_id == newest_release_on_api.id:
-                return
-
-            # 6. Check if our known ID still exists in the list of recent releases from the API.
-            known_id_exists_in_api_list = any(r.id == known_id for r in latest_releases_from_api)
-
-            # 7. THIS IS THE FIX: If our known ID is gone, the release was deleted.
-            # We will NOT send a notification. Instead, we re-sync our state to the
-            # current latest release to prevent false notifications in the future.
-            if not known_id_exists_in_api_list:
-                logger.warning(
-                    f"Known release ID {known_id} for {repo_name} no longer found in recent releases. "
-                    f"It was likely deleted. Re-syncing baseline to {newest_release_on_api.id}."
-                )
-                await self.db_manager.update_repository_release_id(repo_name, newest_release_on_api.id)
-                return
-
-            # 8. If we reach here, our known release exists, but it's not the newest.
-            # This means a genuinely new release has been published.
-            logger.info(f"New release found for {repo_name}! Old ID: {known_id}, New ID: {newest_release_on_api.id}. Queueing notification.")
-            await self.repo_queue.put(("release", repo_name))
-            await self.db_manager.update_repository_release_id(repo_name, newest_release_on_api.id)
-
+            # --- END REFACTOR ---
         except GitHubAPIError as e:
-            logger.error(f"A GitHub API error occurred during release check for {repo_name}: {e}")
+            logger.error(f"A GitHub API error occurred during release check for list {tracked_list_slug}: {e}")
         except Exception as e:
-            logger.error(f"A critical error occurred during release check for {repo_name}: {e}", exc_info=True)
+            logger.error(f"A critical error occurred during release check for list {tracked_list_slug}: {e}", exc_info=True)

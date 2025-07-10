@@ -1,7 +1,7 @@
 # src/modules/telegram/services/notification_service.py
 
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import asyncio
 
 import aiohttp
@@ -13,6 +13,7 @@ from src.core.database import DatabaseManager
 from src.modules.ai.summarizer import AISummarizer
 from src.modules.github.api import GitHubAPI
 from src.modules.github.formatter import RepoFormatter
+from src.modules.github.models import Repository
 from src.modules.telegram.keyboards import get_view_on_github_keyboard
 from src.utils import (
     extract_media_from_readme,
@@ -42,18 +43,14 @@ async def notification_worker(
     """
     while not stop_event.is_set():
         try:
-            # Wait for a new item in the queue, with a timeout to allow graceful shutdown.
             notification_type, repo_full_name = await asyncio.wait_for(
                 queue.get(), timeout=1.0
             )
-            # Process the item and send the notification.
             await service.process_and_send(notification_type, repo_full_name)
             queue.task_done()
         except asyncio.TimeoutError:
-            # This is expected when the queue is empty; just continue the loop.
             continue
         except Exception as e:
-            # Log any unexpected errors in the worker itself.
             logger.error(f"Error in notification worker: {e}", exc_info=True)
 
 
@@ -76,118 +73,129 @@ class NotificationService:
         self.github_api = github_api
         self.summarizer = summarizer
 
+    async def _prepare_star_notification_payload(self, repo: Repository) -> Dict[str, Any]:
+        """Prepares the content payload for a star notification."""
+        owner, repo_name = repo.full_name.split("/")
+        readme_content = await self.github_api.get_readme(owner, repo_name)
+        ai_summary, selected_urls, media_group = None, [], []
+
+        if self.summarizer and readme_content:
+            if await self.db_manager.is_ai_summary_enabled():
+                ai_summary = await self.summarizer.summarize_readme(readme_content)
+            if await self.db_manager.is_ai_media_selection_enabled():
+                all_media = extract_media_from_readme(readme_content, repo)
+                if all_media:
+                    selected_urls = await self.summarizer.select_preview_media(readme_content, all_media)
+        
+        if selected_urls:
+            media_group = await self._build_media_group(selected_urls)
+
+        if not media_group:
+            async with aiohttp.ClientSession() as session:
+                social_image_url = await scrape_social_preview_image(repo.url, session)
+                if social_image_url:
+                    media_group.append(InputMediaPhoto(media=social_image_url))
+        
+        return {
+            "destinations": await self.db_manager.get_all_destinations(),
+            "caption": RepoFormatter.format_repository_preview(repo, ai_summary),
+            "media_group": media_group,
+            "reply_markup": None,
+        }
+
+    async def _prepare_release_notification_payload(self, repo: Repository) -> Dict[str, Any]:
+        """Prepares the content payload for a release notification."""
+        media_group, keyboard = [], None
+        if repo.latest_release and repo.latest_release.nodes:
+            release_url = repo.latest_release.nodes[0].url
+            keyboard = get_view_on_github_keyboard(release_url).as_markup()
+            async with aiohttp.ClientSession() as session:
+                image_url = await scrape_social_preview_image(release_url, session)
+                if image_url:
+                    media_group.append(InputMediaPhoto(media=image_url))
+        
+        return {
+            "destinations": await self.db_manager.get_all_release_destinations(),
+            "caption": RepoFormatter.format_release_notification(repo),
+            "media_group": media_group,
+            "reply_markup": keyboard,
+        }
+
     async def process_and_send(self, notification_type: str, repo_full_name: str):
         """
         Main orchestration method for a single notification.
-        
-        Args:
-            notification_type: The type of notification ('star' or 'release').
-            repo_full_name: The full name of the repository (e.g., 'user/repo').
+        It fetches data, delegates payload preparation, and sends the result.
         """
         owner, repo_name = repo_full_name.split("/")
-        logger.info(
-            f"Processing '{notification_type}' notification for {repo_full_name}..."
-        )
+        logger.info(f"Processing '{notification_type}' notification for {repo_full_name}...")
 
-        # 1. Fetch all necessary repository data in a single API call.
-        repo_data = await self.github_api.get_repository_data_for_notification(
-            owner, repo_name
-        )
+        repo_data = await self.github_api.get_repository_data_for_notification(owner, repo_name)
         if not repo_data or not repo_data.repository:
             logger.error(f"Could not fetch data for {repo_full_name}. Aborting.")
             return
 
         repo = repo_data.repository
-        
-        # Initialize variables for the notification components.
-        destinations: List[str] = []
-        media_group: List[InputMediaPhoto | InputMediaVideo] = []
-        caption = ""
-        keyboard: Optional[InlineKeyboardMarkup] = None
+        payload = {}
 
-        # 2. Build the notification content based on the type.
-        if notification_type == "release":
-            destinations = await self.db_manager.get_all_release_destinations()
-            caption = RepoFormatter.format_release_notification(repo)
-            # For releases, try to get a social preview image from the release page.
-            if repo.latest_release and repo.latest_release.nodes:
-                release_url = repo.latest_release.nodes[0].url
-                keyboard = get_view_on_github_keyboard(release_url).as_markup()
-                async with aiohttp.ClientSession() as session:
-                    image_url = await scrape_social_preview_image(release_url, session)
-                    if image_url:
-                        media_group.append(InputMediaPhoto(media=image_url))
+        if notification_type == "star":
+            payload = await self._prepare_star_notification_payload(repo)
+        elif notification_type == "release":
+            payload = await self._prepare_release_notification_payload(repo)
+        else:
+            logger.warning(f"Unknown notification type '{notification_type}'. Aborting.")
+            return
 
-        elif notification_type == "star":
-            destinations = await self.db_manager.get_all_destinations()
-            readme_content = await self.github_api.get_readme(owner, repo_name)
-            ai_summary = None
-
-            # Use AI features if they are enabled and a README exists.
-            if (
-                self.summarizer
-                and await self.db_manager.are_ai_features_enabled()
-                and readme_content
-            ):
-                # Generate an AI summary of the README.
-                ai_summary = await self.summarizer.summarize_readme(readme_content)
-                # Find and select the best preview media using AI.
-                all_media = extract_media_from_readme(readme_content, repo)
-                if all_media:
-                    selected_urls = await self.summarizer.select_preview_media(
-                        readme_content, all_media
-                    )
-                    media_group = await self._build_media_group(selected_urls)
-
-            # If no media was found via AI, fall back to the repo's social preview image.
-            if not media_group:
-                main_repo_url = f"https://github.com/{owner}/{repo_name}"
-                async with aiohttp.ClientSession() as session:
-                    social_image_url = await scrape_social_preview_image(
-                        main_repo_url, session
-                    )
-                    if social_image_url:
-                        media_group.append(InputMediaPhoto(media=social_image_url))
-            
-            # Format the final caption for the star notification.
-            caption = RepoFormatter.format_repository_preview(repo, ai_summary)
-
-        if not destinations:
+        if not payload or not payload.get("destinations"):
             logger.warning(f"No destinations found for type '{notification_type}' on repo {repo_full_name}. Aborting.")
             return
 
-        # 3. Send the composed notification to all configured destinations.
-        for target_id in destinations:
-            await self._send_notification(repo_full_name, target_id, caption, media_group, reply_markup=keyboard)
+        for target_id in payload["destinations"]:
+            await self._send_notification(
+                repo_full_name=repo_full_name,
+                target_id=target_id,
+                caption=payload["caption"],
+                media_group=payload["media_group"],
+                reply_markup=payload["reply_markup"],
+            )
 
     async def _build_media_group(
         self, urls: List[str]
     ) -> List[InputMediaPhoto | InputMediaVideo]:
         """
-        Validates media URLs, filters them using a utility function,
-        and builds a list of Telegram media objects.
+        Validates media URLs, filters them, and builds a list of Telegram media objects.
+        This version has improved logic to trust GitHub asset URLs.
         """
         media_group = []
         if not urls:
             return media_group
-        
+
         async with aiohttp.ClientSession() as session:
-            # Validate all URLs concurrently for performance.
-            validation_tasks = [get_media_info(url, session) for url in urls]
-            media_info_results = await asyncio.gather(
-                *validation_tasks, return_exceptions=True
-            )
+            validation_tasks = []
+            for url in urls:
+                if "github.com/" in url and "/assets/" in url:
+                    logger.info(f"Trusting GitHub asset URL, skipping HEAD validation: {url}")
+                    # Assume it's a photo if it's not obviously a video
+                    if any(vid_ext in url for vid_ext in ['.mp4', '.webm', '.mov']):
+                         media_group.append(InputMediaVideo(media=url))
+                    else:
+                         media_group.append(InputMediaPhoto(media=url))
+                else:
+                    validation_tasks.append(get_media_info(url, session))
+
+            if not validation_tasks:
+                return media_group # Return early if all URLs were trusted assets
+
+            media_info_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
+            
+            # This part now only processes URLs that needed validation
+            validated_urls_processed = [task.cr_frame.f_locals['url'] for task in validation_tasks]
             for i, result in enumerate(media_info_results):
-                original_url = urls[i]
+                original_url = validated_urls_processed[i]
                 if isinstance(result, Exception) or not result or not result[0]:
-                    logger.warning(
-                        f"Validation failed for media URL '{original_url}'. Reason: {result}"
-                    )
+                    logger.warning(f"Validation failed for media URL '{original_url}'. Reason: {result}")
                     continue
                 
                 content_type, final_url = result
-
-                # Use the clean utility function for keyword filtering
                 if is_url_excluded(final_url):
                     logger.info(f"URL '{final_url}' was filtered out by keyword exclusion.")
                     continue
@@ -207,7 +215,6 @@ class NotificationService:
         reply_markup: Optional[InlineKeyboardMarkup] = None,
     ):
         """Handles the actual sending logic to Telegram, including error handling."""
-        # Parse the target_id which might contain a thread_id (e.g., '-100.../123')
         chat_id, thread_id = (
             (target_id.split("/")[0], int(target_id.split("/")[1]))
             if "/" in target_id
@@ -218,7 +225,6 @@ class NotificationService:
                 media_group[0].caption = caption
                 media_group[0].parse_mode = "HTML"
                 
-                # Use send_photo for single images for better display options (like buttons).
                 if len(media_group) == 1 and isinstance(media_group[0], InputMediaPhoto):
                     await self.bot.send_photo(
                         chat_id=chat_id,
@@ -229,14 +235,10 @@ class NotificationService:
                         reply_markup=reply_markup,
                     )
                 else:
-                    # Send as a media group for multiple items or videos.
                     await self.bot.send_media_group(
-                        chat_id=chat_id, 
-                        media=media_group, 
-                        message_thread_id=thread_id
+                        chat_id=chat_id, media=media_group, message_thread_id=thread_id
                     )
             else:
-                # Send as a plain text message if no media is available.
                 await self.bot.send_message(
                     chat_id,
                     caption,
@@ -246,40 +248,21 @@ class NotificationService:
                     reply_markup=reply_markup,
                 )
         except TelegramAPIError as e:
-            # Handle errors from the Telegram API.
             error_message = str(e).lower()
             repo_link = f"<a href='https://github.com/{repo_full_name}'>{repo_full_name}</a>"
 
-            if (
-                "wrong type of the web page content" in error_message or
-                "failed to get http url content" in error_message or
-                "webpage_curl_failed" in error_message or
-                "webpage_media_empty" in error_message
-            ):
-                logger.warning(
-                    f"Could not send media for {repo_link} due to URL error: {e}. Retrying as text-only."
-                )
+            if any(p_error in error_message for p_error in PERMANENT_TELEGRAM_ERRORS):
+                logger.warning(f"Permanent error for destination {target_id} for {repo_link}: {e}. Removing.")
+                await self.db_manager.remove_destination(target_id)
+                await self.db_manager.remove_release_destination(target_id)
+            elif any(media_error in error_message for media_error in ["wrong type of the web page content", "failed to get http url content", "webpage_curl_failed", "webpage_media_empty"]):
+                logger.warning(f"Could not send media for {repo_link}: {e}. Retrying as text-only.")
                 try:
-                    # Retry sending the notification as a text-only message.
                     await self.bot.send_message(
-                        chat_id,
-                        caption,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                        message_thread_id=thread_id,
-                        reply_markup=reply_markup,
+                        chat_id, caption, parse_mode="HTML", disable_web_page_preview=True,
+                        message_thread_id=thread_id, reply_markup=reply_markup,
                     )
                 except Exception as fallback_e:
                     logger.error(f"Fallback text-only notification also failed for {repo_link}: {fallback_e}")
-                return # Stop further processing for this error
-            
-            # If the error is permanent (e.g., bot kicked), remove the destination.
-            if any(p_error in error_message for p_error in PERMANENT_TELEGRAM_ERRORS):
-                logger.warning(
-                    f"Permanent error for destination {target_id} while sending for {repo_link}: {e}. Removing."
-                )
-                await self.db_manager.remove_destination(target_id)
-                await self.db_manager.remove_release_destination(target_id)
             else:
-                # For temporary errors, just log it with the helpful context.
                 logger.error(f"Telegram API error for repo {repo_link} to target '{target_id}': {e}")

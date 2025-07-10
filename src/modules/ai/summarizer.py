@@ -10,6 +10,7 @@ from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockT
 from pydantic import BaseModel, Field, ValidationError
 
 from src.core.config import Settings
+from src.utils import EXCLUDED_KEYWORDS
 
 logger = logging.getLogger(__name__)
 
@@ -48,15 +49,17 @@ class AISummarizer:
 
         prompt = textwrap.dedent(
             f"""
-            You are an expert technical writer, skilled at creating clear and concise software summaries. Your task is to analyze the following README and generate a summary for a preview card in a messaging app.
-
+            You are an expert technical writer, skilled at creating clear and concise software summaries.
+            Your task is to analyze the following README and generate a summary for a preview card in a messaging app.
             **CRITICAL INSTRUCTIONS:**
-            1.  **Extract Core Information:** Identify and extract the most critical information. Structure your summary with the project's main purpose (a one-sentence pitch) followed by 2-4 key features.
-            2.  **Exclusions:** You MUST ignore sections about installation, configuration, donation, licensing, and usage examples. Focus only on what the project IS and what it DOES.
+            1.  **Extract Core Information:** Identify and extract the most critical information.
+            Structure your summary with the project's main purpose (a one-sentence pitch) followed by 2-4 key features.
+            2.  **Exclusions:** You MUST ignore sections about installation, configuration, donation, licensing, and usage examples.
+            Focus only on what the project IS and what it DOES.
             3.  **Neutral, Technical Tone:** Preserve the original text's tone. Do not add marketing fluff or enthusiastic language.
-            4.  **Formatting:** The entire output MUST be plain text. Use line breaks for readability. Do NOT use any Markdown or HTML.
+            4.  **Formatting:** The entire output MUST be plain text. Use line breaks for readability.
+            Do NOT use any Markdown or HTML.
             5.  **Strict Character Limit:** The final output MUST NOT EXCEED 680 characters.
-
             **Original README content to process:**
             ---
             {readme_content[:12000]}
@@ -83,18 +86,20 @@ class AISummarizer:
             return []
 
         formatted_url_list = "\n".join(f"- {url}" for url in media_urls)
+        
+        # --- Make the AI aware of our excluded keywords ---
+        excluded_keywords_str = ", ".join(sorted(list(EXCLUDED_KEYWORDS)))
 
         prompt = textwrap.dedent(
             f"""
             You are an expert UI/UX analyst. Your task is to select the 1 to 3 best media files from the provided list that visually represent a software project, based on its README file.
-
             **ANALYSIS PRIORITIES:**
             1.  **High-Value Sections:** Prioritize media found under headings like "Preview", "Demo", "Screenshots", "Showcase", "Features", or "How it works".
             2.  **Media Type Preference:** Prefer videos (.mp4, .webm) over images (.png, .jpg) as they are more descriptive.
             3.  **Content is Key:** Choose media that clearly demonstrates the project's purpose or user interface.
-            4.  **Exclusions:** IGNORE media from sections like "Sponsors", "Contributors", "License", or "Badges". Also ignore non-representative formats such as SVG, GIF, or icons.
-            5.  **Hosting Services:** AVOID links from file-hosting websites like MediaFire, Dropbox, Google Drive, Mega.nz, etc. Prioritize direct links to media files (e.g., raw GitHub content, Imgur) or embedded videos from platforms like YouTube.
-
+            4.  **Exclusions:** IGNORE media from sections like "Sponsors", "Contributors", "License", or "Badges".
+            **Do NOT select any URL that contains these keywords: {excluded_keywords_str}.**
+            5.  **Hosting Services:** AVOID links from file-hosting websites. Prioritize direct links to media files.
             **CRITICAL OUTPUT FORMAT:**
             - Your entire response MUST be a single, valid JSON object.
             - The JSON object must match this schema: `{{"selected_media": [{{"url": "string"}}]}}`

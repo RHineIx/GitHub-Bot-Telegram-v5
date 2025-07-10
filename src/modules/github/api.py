@@ -178,7 +178,7 @@ class GitHubAPI:
                     # Add a debug log to see the HTML content if scraping fails
                     logger.debug(f"Page content received for scraping:\n{html}")
                     return []
-                    
+                
                 repo_full_names = [link['href'].lstrip('/') for link in repo_links]
                 logger.info(f"Successfully scraped {len(repo_full_names)} repos from list '{list_slug}'.")
                 return repo_full_names
@@ -265,11 +265,79 @@ class GitHubAPI:
 
 
     async def get_user_repository_lists(self) -> Optional[ViewerListsData]:
-            """Fetches the viewer's created repository lists."""
-            try:
-                data = await self._execute_graphql_query(GET_USER_REPOSITORY_LISTS_QUERY, {})
-                # The structure is nested under 'viewer'
-                return ViewerListsData.model_validate(data.get("viewer", {})) if data else None
-            except (ValidationError, GitHubAPIError) as e:
-                logger.error(f"Failed to get/validate GraphQL user repo lists: {e}")
+        """Fetches the viewer's created repository lists."""
+        try:
+            data = await self._execute_graphql_query(GET_USER_REPOSITORY_LISTS_QUERY, {})
+            # The structure is nested under 'viewer'
+            return ViewerListsData.model_validate(data.get("viewer", {})) if data else None
+        except (ValidationError, GitHubAPIError) as e:
+            logger.error(f"Failed to get/validate GraphQL user repo lists: {e}")
+            return None
+
+    async def get_latest_releases_for_multiple_repos(
+        self, repo_full_names: List[str]
+    ) -> Optional[Dict[str, str]]:
+        """
+        Fetches the latest release node_id for multiple repositories in a single
+        GraphQL query using aliases.
+
+        Args:
+            repo_full_names: A list of "owner/repo" strings.
+
+        Returns:
+            A dictionary mapping "owner/repo" to its latest release node_id,
+            or None on failure. Returns an empty dict if no repos have releases.
+        """
+        if not repo_full_names:
+            return {}
+
+        # --- Build the dynamic query ---
+        query_parts = []
+        variables = {}
+        for i, full_name in enumerate(repo_full_names):
+            owner, name = full_name.split("/")
+            # Create a unique alias for each repository query
+            alias = f"repo{i}"
+            query_parts.append(
+                f"""
+                {alias}: repository(owner: $owner{i}, name: $name{i}) {{
+                    nameWithOwner
+                    latestRelease: releases(first: 1, orderBy: {{field: CREATED_AT, direction: DESC}}) {{
+                        nodes {{
+                            id
+                        }}
+                    }}
+                }}
+                """
+            )
+            variables[f"owner{i}"] = owner
+            variables[f"name{i}"] = name
+        
+        # --- Construct the final query string ---
+        variable_definitions = ", ".join(f"$owner{i}: String!, $name{i}: String!" for i in range(len(repo_full_names)))
+        query_body = "\n".join(query_parts)
+        full_query = f"query GetMultipleReleases({variable_definitions}) {{\n{query_body}\n}}"
+
+        # --- Execute and process the query ---
+        try:
+            data = await self._execute_graphql_query(full_query, variables)
+            if not data:
                 return None
+
+            results = {}
+            for i in range(len(repo_full_names)):
+                alias = f"repo{i}"
+                repo_data = data.get(alias)
+                if (
+                    repo_data
+                    and (release_info := repo_data.get("latestRelease"))
+                    and (nodes := release_info.get("nodes"))
+                ):
+                    # We have a release, store its ID
+                    results[repo_data["nameWithOwner"]] = nodes[0]["id"]
+            
+            logger.info(f"Fetched latest release data for {len(results)} repos in a single API call.")
+            return results
+        except (ValidationError, GitHubAPIError) as e:
+            logger.error(f"Failed to get/validate multi-repo release data: {e}")
+            return None
