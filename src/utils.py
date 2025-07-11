@@ -202,7 +202,7 @@ def clean_release_notes(text: str) -> str:
 
 # Using a set is more idiomatic and slightly more performant for `in` checks.
 EXCLUDED_KEYWORDS = {
-    "badge", "sponsor", "donate", "logo", "logo.svg", "gif", "svg", "extension",
+    "badge", "sponsor", "donate", "logo", "gif", ".svg", "extension",
     "contributor", "shields.io", "badgen.net", "vercel.svg",
     "netlify.com/img/deploy", "app.codacy.com", "lgtm.com",
 }
