@@ -47,15 +47,14 @@ class AISummarizer:
         self.model = genai.GenerativeModel(
             self.model_name, safety_settings=safety_settings
         )
-        self.max_retries = 5  # Maximum number of retries for a request
+        self.max_retries = 5
+        self.base_delay = 2
 
     async def _execute_with_retry(self, api_call: Callable[..., Any], *args, **kwargs) -> Optional[Any]:
         """
-        Executes a Gemini API call with exponential backoff and jitter for rate limit errors.
+        Executes a Gemini API call with exponential backoff for rate limit errors.
         """
         attempt = 0
-        base_delay = 2  # Start with a 2-second delay
-
         while attempt < self.max_retries:
             try:
                 return await api_call(*args, **kwargs)
@@ -65,11 +64,9 @@ class AISummarizer:
                     logger.error(f"API call failed after {self.max_retries} attempts. Giving up. Error: {e}")
                     return None
                 
-                # Exponential backoff with jitter
-                delay = (base_delay ** attempt) + (random.uniform(0, 1))
+                delay = (self.base_delay ** attempt) + (random.uniform(0, 1))
                 logger.warning(
-                    f"Rate limit exceeded for {api_call.__name__}. "
-                    f"Retrying in {delay:.2f} seconds... (Attempt {attempt}/{self.max_retries})"
+                    f"Rate limit exceeded. Retrying in {delay:.2f} seconds... (Attempt {attempt}/{self.max_retries})"
                 )
                 await asyncio.sleep(delay)
             except Exception as e:
@@ -78,24 +75,23 @@ class AISummarizer:
         return None
 
     async def summarize_readme(self, readme_content: str) -> Optional[str]:
-        if not readme_content or len(readme_content) < 50:
+        if not readme_content or len(readme_content) < 150:
             logger.debug("README content is too short to summarize.")
             return None
 
         prompt = textwrap.dedent(
             f"""
             You are an expert technical writer, skilled at creating clear and concise software summaries.
-            Your task is to analyze the following README and generate a summary for a preview card in a messaging app.
-            **CRITICAL INSTRUCTIONS:**
-            1.  **Extract Core Information:** Identify and extract the most critical information.
-            Structure your summary with the project's main purpose (a one-sentence pitch) followed by 2-4 key features.
-            2.  **Exclusions:** You MUST ignore sections about installation, configuration, donation, licensing, and usage examples.
-            Focus only on what the project IS and what it DOES.
-            3.  **Neutral, Technical Tone:** Preserve the original text's tone. Do not add marketing fluff or enthusiastic language.
-            4.  **Formatting:** The entire output MUST be plain text. Use line breaks for readability.
-            Do NOT use any Markdown or HTML.
-            5.  **Strict Character Limit:** The final output MUST NOT EXCEED 680 characters.
-            **Original README content to process:**
+            Analyze the following README and generate a summary for a preview card.
+            **Instructions:**
+            1.  **Core Purpose:** Start with a one-sentence pitch that explains the project's main goal.
+            2.  **Key Features:** Follow with 2-4 key features in plain text.
+            3.  **Exclusions:** Ignore installation, configuration, donation, and licensing sections.
+            4.  **Tone:** Maintain a neutral, technical tone. No marketing language.
+            5.  **Format:** The entire output must be plain text. Do NOT use Markdown or HTML.
+            6.  **Character Limit:** The final summary must NOT EXCEED 680 characters.
+            
+            **README to process:**
             ---
             {readme_content[:12000]}
             ---
@@ -120,22 +116,20 @@ class AISummarizer:
 
         prompt = textwrap.dedent(
             f"""
-            You are an expert UI/UX analyst. Your task is to select the 1 to 3 best media files from the provided list that visually represent a software project, based on its README file.
-            **ANALYSIS PRIORITIES:**
-            1.  **High-Value Sections:** Prioritize media found under headings like "Preview", "Demo", "Screenshots", "Showcase", "Features", or "How it works".
-            2.  **Media Type Preference:** Prefer videos (.mp4, .webm) over images (.png, .jpg) as they are more descriptive.
-            3.  **Content is Key:** Choose media that clearly demonstrates the project's purpose or user interface.
-            4.  **Exclusions:** IGNORE media from sections like "Sponsors", "Contributors", "License", or "Badges".
-            **Do NOT select any URL that contains these keywords: {excluded_keywords_str}.**
-            5.  **Hosting Services:** AVOID links from file-hosting websites. Prioritize direct links to media files.
+            You are a UI/UX analyst. Select the 1 to 3 best media files from the list that visually represent the software project, based on its README.
+            **Priorities:**
+            1.  **High-Value Sections:** Prioritize media from "Preview", "Demo", "Screenshots", or "Features".
+            2.  **Media Type:** Prefer videos (.mp4, .webm) over images.
+            3.  **Exclusions:** IGNORE media from "Sponsors" or "Badges". Do NOT select any URL containing these keywords: {excluded_keywords_str}.
+            
             **CRITICAL OUTPUT FORMAT:**
             - Your entire response MUST be a single, valid JSON object.
-            - The JSON object must match this schema: `{{"selected_media": [{{"url": "string"}}]}}`
-            - Do not add any explanation, preamble, or markdown. Only the raw JSON object.
+            - Schema: `{{"selected_media": [{{"url": "string"}}]}}`
+            - Do not add any explanation or markdown. Only the raw JSON.
 
-            **README Content to Analyze:**
+            **README Content:**
             ---
-            {readme_content[:12000]}
+            {readme_content[:10000]}
             ---
 
             **Available Media URLs:**

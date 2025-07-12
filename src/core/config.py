@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # --- Gemini AI Settings ---
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     gemini_model_name: str = Field(
-        default="gemini-1.5-flash", validation_alias="GEMINI_MODEL_NAME"
+        default="gemini-2.0-flash", validation_alias="GEMINI_MODEL_NAME"
     )
 
     # --- GitHub API Settings ---

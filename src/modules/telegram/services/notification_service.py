@@ -128,6 +128,12 @@ class NotificationService:
 
         if self.summarizer and readme_content and await self.db_manager.is_ai_summary_enabled():
             ai_summary = await self.summarizer.summarize_readme(readme_content)
+
+        # Proactively wait for 2 seconds to avoid hitting the Gemini free tier rate limit
+        # when making two consecutive calls (summarize -> select_media).
+        if self.summarizer and readme_content and await self.db_manager.is_ai_media_selection_enabled():
+            logger.info("Waiting 2 seconds before media selection to respect API rate limits.")
+            await asyncio.sleep(2)
         
         # Centralized media acquisition logic
         media_group = await self._get_notification_media(repo, readme_content)
