@@ -12,6 +12,8 @@ from aiogram.fsm.state import State, StatesGroup
 from src.core.config import Settings
 from src.core.database import DatabaseManager
 from src.modules.github.api import GitHubAPI, GitHubAPIError
+from src.modules.jobs.monitor import RepositoryMonitor
+from src.modules.jobs.release_monitor import ReleaseMonitor
 from src.modules.telegram.filters import IsOwnerFilter
 from src.modules.telegram.keyboards import (
     get_remove_token_keyboard,
@@ -36,6 +38,7 @@ async def handle_start(message: types.Message):
         "📖 **Available Commands**\n\n"
         "**Core & Status:**\n"
         "`/status` - Shows a detailed summary of the bot's current status.\n"
+        "`/force_check` - Triggers an immediate check for new stars and releases.\n"
         "`/settings` - Opens the interactive menu to configure the bot.\n"
         "`/track` - Configure tracking for new releases from a GitHub List.\n\n"
         "**Token Management:**\n"
@@ -51,6 +54,31 @@ async def handle_start(message: types.Message):
         "`/list_dest_rels` - Lists all release destinations."
     )
     await message.answer(help_text, parse_mode="Markdown", message_effect_id="5046509860389126442")
+
+
+@router.message(Command("force_check"))
+async def handle_force_check(
+    message: types.Message,
+    monitor: RepositoryMonitor,
+    release_monitor: ReleaseMonitor,
+):
+    """
+    Triggers an immediate, one-time check for new stars and releases,
+    bypassing the normal monitoring schedule.
+    """
+    await message.answer("✅ Roger that! Forcing an immediate check for new stars and releases...")
+    
+    try:
+        # Run both checks concurrently and wait for them to complete
+        await asyncio.gather(
+            monitor._check_for_new_stars(),
+            release_monitor._check_for_new_releases()
+        )
+        
+        await message.answer("Forced check complete!")
+    except Exception as e:
+        logger.error(f"Error during forced check: {e}", exc_info=True)
+        await message.answer("❌ An error occurred during the forced check. Please see logs.")
 
 
 @router.message(Command("settings"))
@@ -73,7 +101,6 @@ async def handle_status(
     
     wait_msg = await message.answer("🔍 Fetching status...")
     try:
-        # Gather all status information concurrently
         tracked_list_slug = await db_manager.get_tracked_list()
         owner_login = await github_api.get_viewer_login() if tracked_list_slug else None
         
@@ -96,7 +123,6 @@ async def handle_status(
             if not isinstance(val, Exception)
         }
         
-        # Format the status message
         uptime = datetime.now(timezone.utc) - start_time
         uptime_str = str(uptime - timedelta(microseconds=uptime.microseconds))
         
@@ -164,7 +190,6 @@ async def process_token(
     token = message.text.strip()
     wait_msg = await message.answer("Validating token...")
 
-    # Store the token temporarily for validation
     await db_manager.store_token(token)
     try:
         username = await github_api.get_viewer_login()
@@ -172,7 +197,6 @@ async def process_token(
             raise GitHubAPIError(401, "Invalid token or missing permissions.")
 
         user_chat_id = str(message.from_user.id)
-        # Add the user's chat as a destination for BOTH notification types
         await db_manager.add_destination(user_chat_id)
         await db_manager.add_release_destination(user_chat_id)
         logger.info(f"Automatically added {user_chat_id} as a default destination for all notification types.")
@@ -186,14 +210,13 @@ async def process_token(
         await wait_msg.edit_text(reply_text, parse_mode="Markdown")
 
     except GitHubAPIError:
-        await db_manager.remove_token() # Clean up the invalid token
+        await db_manager.remove_token()
         await wait_msg.edit_text(
             "❌ **Invalid Token.** Please ensure it has the correct permissions (read:user, repo) and is not expired."
         )
     finally:
         await state.clear()
         try:
-            # Delete the message containing the user's token for security
             await message.delete()
         except Exception:
             logger.warning("Could not delete user's token message.")

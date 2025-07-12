@@ -91,37 +91,46 @@ class NotificationService:
         self.github_api = github_api
         self.summarizer = summarizer
 
+    async def _get_notification_media(self, repo: Repository, readme_content: Optional[str]) -> List[InputMediaPhoto | InputMediaVideo]:
+        """
+        Attempts to get the best available media for a notification, following a fallback sequence.
+        1. Try AI-selected media.
+        2. If none, try the social preview image.
+        Returns a list of media objects or an empty list.
+        """
+        # --- Attempt 1: AI Media Selection ---
+        if self.summarizer and readme_content and await self.db_manager.is_ai_media_selection_enabled():
+            all_media_urls = extract_media_from_readme(readme_content, repo)
+            if all_media_urls:
+                selected_urls = await self.summarizer.select_preview_media(readme_content, all_media_urls)
+                if selected_urls:
+                    media_group = await self._build_media_group(selected_urls)
+                    if media_group:
+                        logger.info(f"Successfully built media group using AI selection for {repo.full_name}.")
+                        return media_group
+
+        # --- Attempt 2: Social Preview Image Fallback ---
+        logger.info(f"AI media selection failed or was disabled for {repo.full_name}. Trying social preview fallback.")
+        async with aiohttp.ClientSession() as session:
+            social_image_url = await scrape_social_preview_image(repo.url, session)
+            if social_image_url:
+                logger.info(f"Successfully found social preview image for {repo.full_name}.")
+                return [InputMediaPhoto(media=social_image_url)]
+
+        logger.info(f"All media acquisition methods failed for {repo.full_name}.")
+        return []
+
     async def _prepare_star_notification_payload(self, repo: Repository) -> Dict[str, Any]:
-        """
-        Prepares the content payload for a star notification.
-        This version now relies on the AISummarizer's internal retry logic.
-        """
+        """Prepares the content payload for a star notification."""
         owner, repo_name = repo.full_name.split("/")
         readme_content = await self.github_api.get_readme(owner, repo_name)
-        ai_summary, selected_urls, media_group = None, [], []
+        ai_summary = None
 
-        if self.summarizer and readme_content:
-            # The retry logic is now handled inside the summarizer module.
-
-            # 1. First, generate the summary.
-            if await self.db_manager.is_ai_summary_enabled():
-                ai_summary = await self.summarizer.summarize_readme(readme_content)
-            
-            # 2. After the summary is done, select the media.
-            if await self.db_manager.is_ai_media_selection_enabled():
-                all_media = extract_media_from_readme(readme_content, repo)
-                if all_media:
-                    selected_urls = await self.summarizer.select_preview_media(readme_content, all_media)
+        if self.summarizer and readme_content and await self.db_manager.is_ai_summary_enabled():
+            ai_summary = await self.summarizer.summarize_readme(readme_content)
         
-        if selected_urls:
-            media_group = await self._build_media_group(selected_urls)
-
-        # Fallback to social preview image if no media was selected by AI
-        if not media_group:
-            async with aiohttp.ClientSession() as session:
-                social_image_url = await scrape_social_preview_image(repo.url, session)
-                if social_image_url:
-                    media_group.append(InputMediaPhoto(media=social_image_url))
+        # Centralized media acquisition logic
+        media_group = await self._get_notification_media(repo, readme_content)
         
         return {
             "destinations": await self.db_manager.get_all_destinations(),
@@ -149,10 +158,7 @@ class NotificationService:
         }
 
     async def process_and_send(self, notification_type: str, repo_full_name: str):
-        """
-        Main orchestration method for a single notification.
-        It fetches data, delegates payload preparation, and sends the result.
-        """
+        """Main orchestration method for a single notification."""
         logger.info(f"Starting AI processing for '{repo_full_name}'...")
         owner, repo_name = repo_full_name.split("/")
 
@@ -172,13 +178,9 @@ class NotificationService:
             logger.warning(f"Unknown notification type '{notification_type}'. Aborting.")
             return
 
-        if not payload or not payload.get("destinations"):
-            logger.warning(f"No destinations found for type '{notification_type}' on repo {repo_full_name}. Aborting.")
-            return
-
         for target_id in payload["destinations"]:
             await self._send_notification(
-                repo_full_name=repo_full_name,
+                repo_full_name=repo.full_name,
                 target_id=target_id,
                 caption=payload["caption"],
                 media_group=payload["media_group"],
@@ -190,7 +192,6 @@ class NotificationService:
     ) -> List[InputMediaPhoto | InputMediaVideo]:
         """
         Validates media URLs, filters them, and builds a list of Telegram media objects.
-        This version has improved logic to trust GitHub asset URLs and robustly handles tasks.
         """
         media_group = []
         if not urls:
@@ -251,31 +252,27 @@ class NotificationService:
             else (target_id, None)
         )
         try:
+            # Case 1: We have media to send
             if media_group:
                 media_group[0].caption = caption
                 media_group[0].parse_mode = "HTML"
                 
                 if len(media_group) == 1 and isinstance(media_group[0], InputMediaPhoto):
                     await self.bot.send_photo(
-                        chat_id=chat_id,
-                        photo=media_group[0].media,
-                        caption=caption,
-                        parse_mode="HTML",
-                        message_thread_id=thread_id,
-                        reply_markup=reply_markup,
+                        chat_id=chat_id, photo=media_group[0].media,
+                        caption=caption, parse_mode="HTML",
+                        message_thread_id=thread_id, reply_markup=reply_markup
                     )
                 else:
                     await self.bot.send_media_group(
                         chat_id=chat_id, media=media_group, message_thread_id=thread_id
                     )
+            # Case 2: No media, send as text-only WITH link preview enabled
             else:
                 await self.bot.send_message(
-                    chat_id,
-                    caption,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True if reply_markup else False,
-                    message_thread_id=thread_id,
-                    reply_markup=reply_markup,
+                    chat_id, caption, parse_mode="HTML",
+                    disable_web_page_preview=False,  # Explicitly enable link preview
+                    message_thread_id=thread_id, reply_markup=reply_markup,
                 )
         except TelegramAPIError as e:
             error_message = str(e).lower()
