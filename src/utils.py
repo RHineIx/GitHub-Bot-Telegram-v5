@@ -78,26 +78,48 @@ def format_release_date(dt: datetime) -> str:
 
 
 def extract_media_from_readme(markdown_text: str, repo: Repository) -> List[str]:
+    """
+    Extracts media URLs from README markdown, intelligently converting GitHub blob
+    URLs to raw content URLs suitable for embedding.
+    """
     if not markdown_text:
         return []
+    
+    # Regex patterns to find image/video URLs in markdown or HTML tags
     patterns = [
-        r"\!\[.*?\]\(([^)\s]+)\)",
-        r'<img.*?src=[\'"]([^\'"]+)[\'"]',
-        r'<video.*?src=[\'"]([^\'"]+)[\'"]',
+        r"\!\[.*?\]\(([^)\s]+)\)",        # Markdown images: ![alt](url)
+        r'<img.*?src=[\'"]([^\'"]+)[\'"]',   # HTML images: <img src="...">
+        r'<video.*?src=[\'"]([^\'"]+)[\'"]', # HTML videos: <video src="...">
     ]
-    urls = []
+    
+    found_urls = []
     for pattern in patterns:
-        urls.extend(re.findall(pattern, markdown_text))
+        found_urls.extend(re.findall(pattern, markdown_text))
+
     absolute_urls = []
-    for url in set(urls):
+    for url in set(found_urls): # Use set to process unique URLs only
+        # Clean URL by removing fragments
         url = url.split("#")[0]
-        if url.startswith("http"):
+
+        # --- REFACTORED LOGIC ---
+        # If the URL is a GitHub blob link, convert it to a raw link
+        if "github.com" in url and "/blob/" in url:
+            # Replace "github.com" with "raw.githubusercontent.com" and remove "/blob"
+            raw_url = url.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+            absolute_urls.append(raw_url)
+        # If the URL is already a raw link, use it directly
+        elif "raw.githubusercontent.com" in url:
             absolute_urls.append(url)
-        else:
+        # If the URL is a relative path, construct the full raw URL
+        elif not url.startswith("http"):
             clean_path = url.lstrip("./").lstrip("/")
-            absolute_urls.append(
-                f"https://raw.githubusercontent.com/{repo.full_name}/{repo.default_branch_ref.name}/{clean_path}"
-            )
+            # Construct the standard raw content URL
+            raw_url = f"https://raw.githubusercontent.com/{repo.full_name}/{repo.default_branch_ref.name}/{clean_path}"
+            absolute_urls.append(raw_url)
+        # For other absolute URLs (e.g., imgur, etc.), add them directly
+        else:
+            absolute_urls.append(url)
+            
     return absolute_urls
 
 

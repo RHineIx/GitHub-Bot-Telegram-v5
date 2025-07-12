@@ -3,10 +3,13 @@
 import json
 import logging
 import textwrap
-from typing import List, Optional
+import asyncio
+import random
+from typing import List, Optional, Callable, Any
 
 import google.generativeai as genai
 from google.generativeai.types import GenerationConfig, HarmCategory, HarmBlockThreshold
+from google.api_core.exceptions import ResourceExhausted
 from pydantic import BaseModel, Field, ValidationError
 
 from src.core.config import Settings
@@ -24,7 +27,10 @@ class MediaSelectionResponse(BaseModel):
 
 
 class AISummarizer:
-    """Encapsulates all interactions with the Google Gemini AI model."""
+    """
+    Encapsulates all interactions with the Google Gemini AI model,
+    with built-in resilience for handling API rate limits.
+    """
 
     def __init__(self, settings: Settings):
         if not settings.gemini_api_key:
@@ -41,6 +47,35 @@ class AISummarizer:
         self.model = genai.GenerativeModel(
             self.model_name, safety_settings=safety_settings
         )
+        self.max_retries = 5  # Maximum number of retries for a request
+
+    async def _execute_with_retry(self, api_call: Callable[..., Any], *args, **kwargs) -> Optional[Any]:
+        """
+        Executes a Gemini API call with exponential backoff and jitter for rate limit errors.
+        """
+        attempt = 0
+        base_delay = 2  # Start with a 2-second delay
+
+        while attempt < self.max_retries:
+            try:
+                return await api_call(*args, **kwargs)
+            except ResourceExhausted as e:
+                attempt += 1
+                if attempt >= self.max_retries:
+                    logger.error(f"API call failed after {self.max_retries} attempts. Giving up. Error: {e}")
+                    return None
+                
+                # Exponential backoff with jitter
+                delay = (base_delay ** attempt) + (random.uniform(0, 1))
+                logger.warning(
+                    f"Rate limit exceeded for {api_call.__name__}. "
+                    f"Retrying in {delay:.2f} seconds... (Attempt {attempt}/{self.max_retries})"
+                )
+                await asyncio.sleep(delay)
+            except Exception as e:
+                logger.error(f"An unexpected error occurred during API call {api_call.__name__}: {e}")
+                return None
+        return None
 
     async def summarize_readme(self, readme_content: str) -> Optional[str]:
         if not readme_content or len(readme_content) < 50:
@@ -67,27 +102,20 @@ class AISummarizer:
             """
         )
 
-        try:
-            logger.info("Sending README to Gemini for summarization...")
-            response = await self.model.generate_content_async(prompt)
+        logger.info("Sending README to Gemini for summarization...")
+        response = await self._execute_with_retry(self.model.generate_content_async, prompt)
+        
+        if response:
             summary = response.text.strip().strip('"')
             logger.info("Successfully received summary from Gemini.")
             return summary if summary else None
-        except Exception as e:
-            logger.error(
-                f"An error occurred during README summarization with Gemini: {e}"
-            )
-            return None
+        return None
 
-    async def select_preview_media(
-        self, readme_content: str, media_urls: List[str]
-    ) -> List[str]:
+    async def select_preview_media(self, readme_content: str, media_urls: List[str]) -> List[str]:
         if not media_urls:
             return []
 
         formatted_url_list = "\n".join(f"- {url}" for url in media_urls)
-        
-        # --- Make the AI aware of our excluded keywords ---
         excluded_keywords_str = ", ".join(sorted(list(EXCLUDED_KEYWORDS)))
 
         prompt = textwrap.dedent(
@@ -117,23 +145,20 @@ class AISummarizer:
             """
         )
 
+        logger.info("Asking Gemini to select the best preview media...")
+        generation_config = GenerationConfig(response_mime_type="application/json")
+        response = await self._execute_with_retry(
+            self.model.generate_content_async, prompt, generation_config=generation_config
+        )
+
+        if not response:
+            return []
+
         try:
-            logger.info("Asking Gemini to select the best preview media...")
-            generation_config = GenerationConfig(response_mime_type="application/json")
-            response = await self.model.generate_content_async(
-                prompt, generation_config=generation_config
-            )
-            validated_response = MediaSelectionResponse.model_validate(
-                json.loads(response.text)
-            )
+            validated_response = MediaSelectionResponse.model_validate(json.loads(response.text))
             selected_urls = [item.url for item in validated_response.selected_media]
             logger.info(f"Gemini selected {len(selected_urls)} valid media URLs.")
             return selected_urls[:3]
         except (json.JSONDecodeError, ValidationError) as e:
-            logger.warning(
-                f"Failed to decode or validate Gemini's JSON response for media selection: {e}"
-            )
-            return []
-        except Exception as e:
-            logger.error(f"An error occurred during media selection with Gemini: {e}")
+            logger.warning(f"Failed to decode or validate Gemini's JSON response: {e}")
             return []

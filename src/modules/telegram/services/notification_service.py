@@ -38,20 +38,38 @@ async def notification_worker(
 ):
     """
     Asynchronous worker that consumes repository names from a queue and processes them.
-    This decouples the detection of an event (e.g., a new star) from the processing
-    and sending of the notification, making the application more responsive.
+    This version includes a 5-second delay BEFORE processing the next item to space out
+    resource-intensive AI tasks.
     """
+    is_first_item_in_batch = True
     while not stop_event.is_set():
+        repo_full_name = None  # Ensure variable is defined for the finally block
         try:
+            # Wait for an item from the queue
             notification_type, repo_full_name = await asyncio.wait_for(
                 queue.get(), timeout=1.0
             )
+
+            # If this is not the first item in a new batch of tasks, wait for 5 seconds.
+            if not is_first_item_in_batch:
+                logger.info(f"Waiting 5 seconds before starting AI processing for {repo_full_name}...")
+                await asyncio.sleep(5)
+            
+            # Now that the potential delay is over, process the item.
             await service.process_and_send(notification_type, repo_full_name)
-            queue.task_done()
+            
+            is_first_item_in_batch = False
+
         except asyncio.TimeoutError:
+            # The queue is empty. Reset the flag so the next item that arrives is processed immediately.
+            is_first_item_in_batch = True
             continue
         except Exception as e:
-            logger.error(f"Error in notification worker: {e}", exc_info=True)
+            logger.error(f"Error processing {repo_full_name}: {e}", exc_info=True)
+        finally:
+            # Mark the task as done, whether it succeeded or failed.
+            if repo_full_name:
+                queue.task_done()
 
 
 class NotificationService:
@@ -74,14 +92,22 @@ class NotificationService:
         self.summarizer = summarizer
 
     async def _prepare_star_notification_payload(self, repo: Repository) -> Dict[str, Any]:
-        """Prepares the content payload for a star notification."""
+        """
+        Prepares the content payload for a star notification.
+        This version now relies on the AISummarizer's internal retry logic.
+        """
         owner, repo_name = repo.full_name.split("/")
         readme_content = await self.github_api.get_readme(owner, repo_name)
         ai_summary, selected_urls, media_group = None, [], []
 
         if self.summarizer and readme_content:
+            # The retry logic is now handled inside the summarizer module.
+
+            # 1. First, generate the summary.
             if await self.db_manager.is_ai_summary_enabled():
                 ai_summary = await self.summarizer.summarize_readme(readme_content)
+            
+            # 2. After the summary is done, select the media.
             if await self.db_manager.is_ai_media_selection_enabled():
                 all_media = extract_media_from_readme(readme_content, repo)
                 if all_media:
@@ -90,6 +116,7 @@ class NotificationService:
         if selected_urls:
             media_group = await self._build_media_group(selected_urls)
 
+        # Fallback to social preview image if no media was selected by AI
         if not media_group:
             async with aiohttp.ClientSession() as session:
                 social_image_url = await scrape_social_preview_image(repo.url, session)
@@ -126,8 +153,8 @@ class NotificationService:
         Main orchestration method for a single notification.
         It fetches data, delegates payload preparation, and sends the result.
         """
+        logger.info(f"Starting AI processing for '{repo_full_name}'...")
         owner, repo_name = repo_full_name.split("/")
-        logger.info(f"Processing '{notification_type}' notification for {repo_full_name}...")
 
         repo_data = await self.github_api.get_repository_data_for_notification(owner, repo_name)
         if not repo_data or not repo_data.repository:
@@ -163,34 +190,36 @@ class NotificationService:
     ) -> List[InputMediaPhoto | InputMediaVideo]:
         """
         Validates media URLs, filters them, and builds a list of Telegram media objects.
-        This version has improved logic to trust GitHub asset URLs.
+        This version has improved logic to trust GitHub asset URLs and robustly handles tasks.
         """
         media_group = []
         if not urls:
             return media_group
 
         async with aiohttp.ClientSession() as session:
-            validation_tasks = []
+            tasks_with_context = []
+            
             for url in urls:
                 if "github.com/" in url and "/assets/" in url:
                     logger.info(f"Trusting GitHub asset URL, skipping HEAD validation: {url}")
-                    # Assume it's a photo if it's not obviously a video
                     if any(vid_ext in url for vid_ext in ['.mp4', '.webm', '.mov']):
                          media_group.append(InputMediaVideo(media=url))
                     else:
                          media_group.append(InputMediaPhoto(media=url))
                 else:
-                    validation_tasks.append(get_media_info(url, session))
+                    task = get_media_info(url, session)
+                    tasks_with_context.append((url, task))
 
-            if not validation_tasks:
-                return media_group # Return early if all URLs were trusted assets
+            if not tasks_with_context:
+                return media_group
 
-            media_info_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
+            validation_results = await asyncio.gather(
+                *[task for _, task in tasks_with_context], return_exceptions=True
+            )
             
-            # This part now only processes URLs that needed validation
-            validated_urls_processed = [task.cr_frame.f_locals['url'] for task in validation_tasks]
-            for i, result in enumerate(media_info_results):
-                original_url = validated_urls_processed[i]
+            for i, result in enumerate(validation_results):
+                original_url = tasks_with_context[i][0]
+                
                 if isinstance(result, Exception) or not result or not result[0]:
                     logger.warning(f"Validation failed for media URL '{original_url}'. Reason: {result}")
                     continue
@@ -204,6 +233,7 @@ class NotificationService:
                     media_group.append(InputMediaVideo(media=final_url))
                 elif "image" in content_type:
                     media_group.append(InputMediaPhoto(media=final_url))
+        
         return media_group
 
     async def _send_notification(

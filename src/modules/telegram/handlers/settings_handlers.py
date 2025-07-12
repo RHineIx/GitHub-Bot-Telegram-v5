@@ -10,7 +10,6 @@ from src.modules.jobs.monitor import RepositoryMonitor
 from src.modules.jobs.release_monitor import ReleaseMonitor
 from src.modules.telegram.keyboards import (
     get_ai_submenu_keyboard,
-    get_digest_submenu_keyboard,
     get_intervals_submenu_keyboard,
     get_interval_submenu_keyboard,
     get_release_interval_submenu_keyboard,
@@ -76,11 +75,6 @@ async def handle_settings_callback(
         await _edit_to_main_menu(call.message, db_manager)
     elif action == "main_menu":
         await _edit_to_main_menu(call.message, db_manager)
-    elif action == "open_digest_menu":
-        keyboard = await get_digest_submenu_keyboard(db_manager)
-        await call.message.edit_text(
-            "🔔 Select Notification Mode:", reply_markup=keyboard.as_markup()
-        )
     elif action == "open_ai_menu":
         await _edit_to_ai_menu(call.message, db_manager)
     elif action == "toggle_ai_summary":
@@ -104,15 +98,6 @@ async def handle_settings_callback(
         keyboard = await get_release_interval_submenu_keyboard(db_manager, settings)
         await call.message.edit_text(
             "🚀 Select Release Monitoring Interval:", reply_markup=keyboard.as_markup()
-        )
-    elif action == "set_digest_mode":
-        if await db_manager.get_digest_mode() == value:
-            await call.answer("This mode is already selected.")
-            return
-        await db_manager.update_digest_mode(value)
-        keyboard = await get_digest_submenu_keyboard(db_manager)
-        await call.message.edit_text(
-            "🔔 Select Notification Mode:", reply_markup=keyboard.as_markup()
         )
     elif action == "set_stars_interval":
         new_interval = int(value)

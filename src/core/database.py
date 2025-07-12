@@ -45,11 +45,6 @@ class DatabaseManager:
                 """
                 CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS destinations (target_id TEXT PRIMARY KEY);
-                CREATE TABLE IF NOT EXISTS digest_queue (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    repo_full_name TEXT UNIQUE NOT NULL,
-                    added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
                 CREATE TABLE IF NOT EXISTS tracked_list (
                     list_slug TEXT PRIMARY KEY
                 );
@@ -159,14 +154,6 @@ class DatabaseManager:
         enabled_state = await self._get_state_value("ai_media_selection_enabled")
         return enabled_state != "0" # Default to ON
 
-    async def update_digest_mode(self, mode: str) -> None:
-        await self._set_state_value("digest_mode", mode)
-        logger.info(f"Digest mode set to: {mode}")
-
-    async def get_digest_mode(self) -> str:
-        mode = await self._get_state_value("digest_mode")
-        return mode if mode else "off"
-
     async def add_destination(self, target_id: str) -> None:
         async with self._write_lock:
             await self._connection.execute(
@@ -206,30 +193,6 @@ class DatabaseManager:
         cursor = await self._connection.execute("SELECT target_id FROM release_destinations")
         rows = await cursor.fetchall()
         return [row[0] for row in rows]
-
-    async def add_repo_to_digest(self, repo_full_name: str) -> None:
-        async with self._write_lock:
-            await self._connection.execute(
-                "INSERT OR IGNORE INTO digest_queue (repo_full_name) VALUES (?)",
-                (repo_full_name,),
-            )
-            await self._connection.commit()
-
-    async def get_and_clear_digest_queue(self) -> List[str]:
-        async with self._write_lock:
-            cursor = await self._connection.execute(
-                "SELECT repo_full_name FROM digest_queue ORDER BY added_at ASC"
-            )
-            repo_list = [row[0] for row in await cursor.fetchall()]
-            if repo_list:
-                await self._connection.execute("DELETE FROM digest_queue")
-                await self._connection.commit()
-            return repo_list
-
-    async def get_digest_queue_count(self) -> int:
-        cursor = await self._connection.execute("SELECT COUNT(*) FROM digest_queue")
-        result = await cursor.fetchone()
-        return result[0] if result else 0
 
     # --- Methods for Release Tracking ---
 

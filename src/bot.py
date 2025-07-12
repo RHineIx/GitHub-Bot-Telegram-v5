@@ -15,13 +15,11 @@ from src.modules.ai.summarizer import AISummarizer
 from src.modules.github.api import GitHubAPI
 from src.modules.jobs.monitor import RepositoryMonitor
 from src.modules.jobs.release_monitor import ReleaseMonitor
-from src.modules.jobs.scheduler import DigestScheduler
 from src.modules.telegram.handlers import (
     command_handlers,
     settings_handlers,
     tracking_handlers,
 )
-# MODIFICATION: Import the worker function directly from the service
 from src.modules.telegram.services.notification_service import (
     NotificationService,
     notification_worker,
@@ -33,7 +31,7 @@ logger = logging.getLogger(__name__)
 async def run():
     log_handler_enabled = setup_logging(settings)
     start_time = datetime.now(timezone.utc)
-    logger.info("Starting GraphQL Bot...")
+    logger.info("Starting Bot...")
 
     db_manager = DatabaseManager()
     await db_manager.init_db()
@@ -58,15 +56,13 @@ async def run():
     )
 
     notification_service = NotificationService(bot, db_manager, github_api, summarizer)
-    scheduler = DigestScheduler(db_manager, repo_queue)
-
+    
     star_monitor = RepositoryMonitor(db_manager, github_api, settings, repo_queue)
     release_monitor = ReleaseMonitor(db_manager, github_api, settings, repo_queue)
 
-
+    # Inject monitors into the dispatcher so handlers can access them
     dp["monitor"] = star_monitor
     dp["release_monitor"] = release_monitor
-    dp["scheduler"] = scheduler
 
     dp.include_router(command_handlers.router)
     dp.include_router(settings_handlers.router)
@@ -80,9 +76,8 @@ async def run():
 
     star_monitor.start()
     release_monitor.start()
-    scheduler.start()
     
-    # This now uses the imported notification_worker
+    # Start the single notification worker
     background_tasks.add(
         asyncio.create_task(
             notification_worker(repo_queue, notification_service, stop_event)
@@ -95,12 +90,21 @@ async def run():
     finally:
         logger.info("Bot is shutting down...")
         stop_event.set()
+        
+        # Gracefully stop monitors
+        star_monitor.stop()
+        release_monitor.stop()
+        
+        # Wait for the queue to be fully processed
+        logger.info("Waiting for notification queue to finish...")
+        await repo_queue.join()
+
+        # Cancel any remaining background tasks
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
-        star_monitor.stop()
-        release_monitor.stop()
-        scheduler.stop()
+        
+        # Close resources
         await github_api.close()
         await db_manager.close()
         await bot.session.close()

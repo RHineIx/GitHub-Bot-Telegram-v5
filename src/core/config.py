@@ -32,9 +32,9 @@ class Settings(BaseSettings):
 
     # --- Bot Behavior ---
     parse_mode: str = "HTML"
-    request_timeout: int = 30
+    # Increased timeout to 60 seconds to better handle slow web scraping operations.
+    request_timeout: int = 60
     default_stars_monitor_interval: int = 600
-
     default_release_monitor_interval: int = 3600
 
     model_config = SettingsConfigDict(

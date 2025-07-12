@@ -3,7 +3,6 @@
 import asyncio
 import logging
 from typing import Optional
-import asyncio
 
 from src.core.config import Settings
 from src.core.database import DatabaseManager
@@ -57,17 +56,20 @@ class RepositoryMonitor:
             try:
                 if await self._is_safe_to_monitor():
                     await self._check_for_new_stars()
+                
                 interval = (
                     await self.db_manager.get_stars_monitor_interval()
                     or self.settings.default_stars_monitor_interval
                 )
+                
+                # Wait for the interval OR a signal that settings have changed
                 await asyncio.wait_for(self._settings_changed.wait(), timeout=interval)
                 logger.info(
                     "Settings change signal received, loop will restart immediately."
                 )
                 self._settings_changed.clear()
             except asyncio.TimeoutError:
-                continue
+                continue # This is expected, it means the interval finished
             except asyncio.CancelledError:
                 logger.info("Star check loop has been cancelled.")
                 break
@@ -75,7 +77,7 @@ class RepositoryMonitor:
                 logger.error(
                     f"An unexpected error in star check loop: {e}", exc_info=True
                 )
-                await asyncio.sleep(120)
+                await asyncio.sleep(120) # Wait before retrying after an unexpected error
 
     async def _check_for_new_stars(self):
         logger.info("Checking for new starred repositories...")
@@ -88,6 +90,7 @@ class RepositoryMonitor:
 
             last_check_timestamp = await self.db_manager.get_last_check_timestamp()
             if not last_check_timestamp:
+                # This is the first run. Set the timestamp of the newest star as the baseline.
                 await self.db_manager.update_last_check_timestamp(
                     starred_events[0].starred_at.isoformat()
                 )
@@ -99,24 +102,22 @@ class RepositoryMonitor:
                 for event in starred_events
                 if event.starred_at.isoformat() > last_check_timestamp
             ]
+
             if not new_starred_events:
                 logger.info("No new starred repositories found.")
                 return
 
+            # Process from oldest to newest to maintain chronological order
             new_starred_events.reverse()
             logger.info(f"Found {len(new_starred_events)} new starred repositories.")
 
-            digest_mode = await self.db_manager.get_digest_mode()
             for event in new_starred_events:
-                if digest_mode == "off":
-                    logger.info(
-                        f"Queueing {event.repository.full_name} for instant notification."
-                    )
-                    await self.repo_queue.put(("star", event.repository.full_name))
-                else:
-                    logger.info(f"Adding {event.repository.full_name} to digest queue.")
-                    await self.db_manager.add_repo_to_digest(event.repository.full_name)
+                logger.info(
+                    f"Queueing {event.repository.full_name} for instant notification."
+                )
+                await self.repo_queue.put(("star", event.repository.full_name))
 
+            # Update the timestamp to the newest star from this batch
             await self.db_manager.update_last_check_timestamp(
                 starred_events[0].starred_at.isoformat()
             )

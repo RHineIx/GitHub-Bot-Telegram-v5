@@ -24,16 +24,11 @@ def _format_seconds_to_short_str(seconds: int) -> str:
 async def get_settings_menu_keyboard(db: DatabaseManager) -> InlineKeyboardBuilder:
     """Builds the main settings menu keyboard."""
     builder = InlineKeyboardBuilder()
-    is_paused, digest_mode = await asyncio.gather(
-        db.is_monitoring_paused(), db.get_digest_mode()
-    )
+    is_paused = await db.is_monitoring_paused()
+    
     builder.button(
         text="▶️ Resume" if is_paused else "⏸️ Pause",
         callback_data=cb_factory("toggle_pause"),
-    )
-    builder.button(
-        text=f"🔔 Mode: {digest_mode.capitalize()}",
-        callback_data=cb_factory("open_digest_menu"),
     )
     builder.button(
         text="🤖 AI Settings",
@@ -43,26 +38,9 @@ async def get_settings_menu_keyboard(db: DatabaseManager) -> InlineKeyboardBuild
         text="⏱️ Intervals",
         callback_data=cb_factory("open_intervals_menu"),
     )
-
     builder.button(text="❌ Close Menu", callback_data=cb_factory("close"))
-    builder.adjust(2) # A clean 2-column layout
+    builder.adjust(2, 1) # Adjust layout
     return builder
-
-
-async def get_digest_submenu_keyboard(db: DatabaseManager) -> InlineKeyboardBuilder:
-    """Builds the digest mode selection submenu keyboard."""
-    builder = InlineKeyboardBuilder()
-    current_mode = await db.get_digest_mode()
-    modes = ["off", "daily", "weekly"]
-
-    for mode in modes:
-        text = f"✅ {mode.capitalize()}" if mode == current_mode else mode.capitalize()
-        builder.button(text=text, callback_data=cb_factory("set_digest_mode", mode))
-
-    builder.button(text="⬅️ Back", callback_data=cb_factory("main_menu"))
-    builder.adjust(3, 1)
-    return builder
-
 
 async def get_ai_submenu_keyboard(db: DatabaseManager) -> InlineKeyboardBuilder:
     """Builds the AI feature selection submenu keyboard."""

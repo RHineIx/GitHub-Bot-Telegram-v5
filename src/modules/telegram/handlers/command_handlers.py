@@ -12,7 +12,6 @@ from aiogram.fsm.state import State, StatesGroup
 from src.core.config import Settings
 from src.core.database import DatabaseManager
 from src.modules.github.api import GitHubAPI, GitHubAPIError
-from src.modules.jobs.scheduler import DigestScheduler
 from src.modules.telegram.filters import IsOwnerFilter
 from src.modules.telegram.keyboards import (
     get_remove_token_keyboard,
@@ -67,7 +66,6 @@ async def handle_status(
     github_api: GitHubAPI,
     settings: Settings,
     start_time: datetime,
-    scheduler: DigestScheduler,
 ):
     if not await db_manager.token_exists():
         await message.answer("❌ No GitHub token is set. Use `/settoken` to add one.")
@@ -85,7 +83,6 @@ async def handle_status(
             "destinations": db_manager.get_all_destinations(),
             "release_dests": db_manager.get_all_release_destinations(),
             "is_paused": db_manager.is_monitoring_paused(),
-            "digest_queue_count": db_manager.get_digest_queue_count(),
             "tracked_repo_count": github_api.get_repos_in_list_by_scraping(owner_login, tracked_list_slug) 
                                    if owner_login and tracked_list_slug else asyncio.sleep(0, result=[]),
             "ai_summary_on": db_manager.is_ai_summary_enabled(),
@@ -122,9 +119,6 @@ async def handle_status(
             repo_count = len(res.get("tracked_repo_count", []))
             status_lines.append(f"⏭️ *Tracked List:* `{tracked_list_slug}` ({repo_count} repos)")
         
-        digest_count = res.get("digest_queue_count", 0)
-        status_lines.append(f"📬 *Digest Queue:* `{digest_count}` items pending")
-        
         if settings.gemini_api_key:
             summary_status = "Active ✅" if res.get("ai_summary_on") else "Inactive ❌"
             media_status = "Active ✅" if res.get("ai_media_on") else "Inactive ❌"
@@ -132,11 +126,6 @@ async def handle_status(
             status_lines.append(f"🖼️ *AI Media Select:* `{media_status}`")
         else:
             status_lines.append("🤖 *AI Features:* `Disabled (No API Key)`")
-
-        if next_run := scheduler.get_next_run_time():
-            status_lines.append(
-                f"🗓️ *Next Digest Job:* {format_time_ago(next_run.isoformat())}"
-            )
             
         status_lines.extend(
             [
