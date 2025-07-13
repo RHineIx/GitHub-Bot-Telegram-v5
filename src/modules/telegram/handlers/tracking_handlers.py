@@ -40,7 +40,6 @@ async def handle_set_tracking_list(
     baselined_count = 0
     
     if repo_full_names:
-        # --- REFACTORED PART ---
         # Use the new efficient method
         latest_releases = await github_api.get_latest_releases_for_multiple_repos(repo_full_names)
 
@@ -55,11 +54,30 @@ async def handle_set_tracking_list(
         else:
             await call.message.edit_text("❌ Failed to fetch release data from GitHub API during baselining.")
             return
-        # --- END REFACTOR ---
-    
+
     await call.message.edit_text(
         f"✅ **Tracking Enabled**\n\n"
         f"Now monitoring the **{list_slug}** list ({repo_count} repos found).\n"
         f"Established baseline for {baselined_count} repositories with existing releases.",
         parse_mode="Markdown"
     )
+
+@router.callback_query(TrackingCallback.filter(F.action == "stop"))
+async def handle_stop_tracking(
+    call: types.CallbackQuery,
+    db_manager: DatabaseManager,
+):
+    """Handles the 'Stop Tracking' button press."""
+    await call.message.edit_text("⏳ Disabling release tracking...")
+
+    # Clear both the tracked list setting and all stored release states
+    await db_manager.clear_tracked_list()
+    await db_manager.clear_release_states()
+    
+    await call.message.edit_text(
+        "✅ **Tracking Stopped**\n\n"
+        "The bot will no longer monitor for new releases. "
+        "You can enable it again at any time using the `/track` command.",
+        parse_mode="Markdown"
+    )
+    await call.answer("Release tracking has been disabled.")

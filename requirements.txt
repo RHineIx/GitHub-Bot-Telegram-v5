@@ -8,3 +8,4 @@ google-generativeai>=0.7.1
 beautifulsoup4>=4.12.3
 cryptography>=42.0.8
 python-dotenv>=1.0.1
+loguru>=0.7.2

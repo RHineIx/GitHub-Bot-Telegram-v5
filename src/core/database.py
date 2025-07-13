@@ -207,10 +207,18 @@ class DatabaseManager:
         logger.info(f"Set tracked GitHub List to: {list_slug}")
 
     async def get_tracked_list(self) -> Optional[str]:
-        """Gets the slug of the currently tracked GitHub List."""
-        cursor = await self._connection.execute("SELECT list_slug FROM tracked_list")
-        row = await cursor.fetchone()
-        return row[0] if row else None
+            """Gets the slug of the currently tracked GitHub List."""
+            cursor = await self._connection.execute("SELECT list_slug FROM tracked_list")
+            row = await cursor.fetchone()
+            return row[0] if row else None
+
+    async def clear_tracked_list(self) -> None:
+        """Removes the tracked GitHub List setting."""
+        async with self._write_lock:
+            await self._connection.execute("DELETE FROM tracked_list")
+            await self._connection.commit()
+        logger.info("Cleared tracked GitHub list configuration.")
+
 
     async def get_repository_release_id(self, repo_full_name: str) -> Optional[str]:
         """Gets the last known release node_id for a specific repository."""
