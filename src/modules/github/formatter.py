@@ -110,7 +110,7 @@ class RepoFormatter:
                 raw_notes = raw_notes[:897] + "..."
             
             # Now, clean and format the already-shortened text
-            notes = clean_release_notes(raw_notes)
+            notes = clean_release_notes(raw_notes, repo)
             
             message_parts.append(f"\n<blockquote expandable>📝 <b>Release Notes:</b>\n{notes}</blockquote>")
 

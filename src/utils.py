@@ -155,10 +155,10 @@ async def scrape_social_preview_image(
     return None
 
 
-def clean_release_notes(text: str) -> str:
+def clean_release_notes(text: str, repo: Repository) -> str:
     """
     Cleans and formats GitHub release notes from Markdown to a Telegram-friendly format.
-    This version uses BeautifulSoup as a final sanitizer to guarantee well-formed HTML.
+    This version now also linkifies commit hashes.
     """
     if not text:
         return ""
@@ -192,12 +192,22 @@ def clean_release_notes(text: str) -> str:
         line = re.sub(r'\[![^\]]+\]\s*', '', line)
         line = re.sub(r'^\s*>\s?', '', line)
 
-        match = re.search(r'https://github\.com/.+/(issues|pull)/(\d+)', line)
-        if match:
-            number = match.group(2)
-            url = match.group(0)
-            if url not in line[:line.find(url)]:
-                line = re.sub(re.escape(url), f'<a href="{url}">#{number}</a>', line)
+        # --- Logic to find and linkify commit hashes ---
+        commit_match = re.search(r'^(?:commit):\s*([0-9a-f]{7,40})', line, re.IGNORECASE)
+        if commit_match:
+            commit_hash = commit_match.group(1)
+            short_hash = commit_hash[:7]
+            commit_url = f"{repo.url}/commit/{commit_hash}"
+            # Replace the entire line with a formatted, clickable link
+            line = f"<b>Commit:</b> <a href='{commit_url}'><code>{short_hash}</code></a>"
+        else:
+            # Original logic for issues and pull requests
+            match = re.search(r'https://github\.com/.+/(issues|pull)/(\d+)', line)
+            if match:
+                number = match.group(2)
+                url = match.group(0)
+                if url not in line[:line.find(url)]:
+                    line = re.sub(re.escape(url), f'<a href="{url}">#{number}</a>', line)
 
         if 'full changelog' in line.lower():
             line = re.sub(
