@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import InputMediaPhoto, InputMediaVideo, InlineKeyboardMarkup
+from aiogram.types import InputMediaPhoto, InputMediaVideo, InlineKeyboardMarkup, BufferedInputFile
 
 from src.core.database import DatabaseManager
 from src.modules.ai.summarizer import AISummarizer
@@ -20,6 +20,7 @@ from src.utils import (
     get_media_info,
     scrape_social_preview_image,
     is_url_excluded,
+    download_image_to_bytes,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,14 +252,22 @@ class NotificationService:
         media_group: List[InputMediaPhoto | InputMediaVideo],
         reply_markup: Optional[InlineKeyboardMarkup] = None,
     ):
-        """Handles the actual sending logic to Telegram, including error handling."""
+        """
+        Handles the actual sending logic to Telegram, with multiple fallback layers.
+        - Tries sending media by URL.
+        - If that fails due to content issues, it downloads the image and sends it as bytes (proxy).
+        - If media fails entirely, it sends as a text message with a link preview.
+        - If all else fails, it sends as a plain text message.
+        """
         chat_id, thread_id = (
             (target_id.split("/")[0], int(target_id.split("/")[1]))
             if "/" in target_id
             else (target_id, None)
         )
+        repo_link = f"<a href='https://github.com/{repo_full_name}'>{repo_full_name}</a>"
+
         try:
-            # Case 1: We have media to send
+            # --- Primary Attempt: Send media by URL ---
             if media_group:
                 media_group[0].caption = caption
                 media_group[0].parse_mode = "HTML"
@@ -273,29 +282,56 @@ class NotificationService:
                     await self.bot.send_media_group(
                         chat_id=chat_id, media=media_group, message_thread_id=thread_id
                     )
-            # Case 2: No media, send as text-only WITH link preview enabled
+            # --- No Media: Send text with link preview ---
             else:
                 await self.bot.send_message(
                     chat_id, caption, parse_mode="HTML",
-                    disable_web_page_preview=False,  # Explicitly enable link preview
+                    disable_web_page_preview=False, # Enable link preview by default
                     message_thread_id=thread_id, reply_markup=reply_markup,
                 )
         except TelegramAPIError as e:
             error_message = str(e).lower()
-            repo_link = f"<a href='https://github.com/{repo_full_name}'>{repo_full_name}</a>"
 
+            # --- Handle Permanent Errors (e.g., bot blocked) ---
             if any(p_error in error_message for p_error in PERMANENT_TELEGRAM_ERRORS):
                 logger.warning(f"Permanent error for destination {target_id} for {repo_link}: {e}. Removing.")
                 await self.db_manager.remove_destination(target_id)
                 await self.db_manager.remove_release_destination(target_id)
-            elif any(media_error in error_message for media_error in ["wrong type of the web page content", "failed to get http url content", "webpage_curl_failed", "webpage_media_empty"]):
-                logger.warning(f"Could not send media for {repo_link}: {e}. Retrying as text-only.")
+                return
+
+            # --- Handle Media Content Errors (this is where the proxy logic kicks in) ---
+            media_content_errors = ["wrong type of the web page content", "failed to get http url content", "webpage_curl_failed", "webpage_media_empty"]
+            if any(media_error in error_message for media_error in media_content_errors):
+                logger.warning(f"Could not send media for {repo_link} by URL: {e}. Attempting proxy download.")
+
+                # --- Fallback 1: Download and send image as bytes ---
+                if media_group and isinstance(media_group[0], InputMediaPhoto):
+                    image_url = media_group[0].media
+                    async with aiohttp.ClientSession() as session:
+                        image_bytes = await download_image_to_bytes(image_url, session)
+                    
+                    if image_bytes:
+                        try:
+                            # Use BufferedInputFile to send bytes
+                            photo_file = BufferedInputFile(image_bytes, filename="preview.jpg")
+                            await self.bot.send_photo(
+                                chat_id=chat_id, photo=photo_file, caption=caption,
+                                parse_mode="HTML", message_thread_id=thread_id, reply_markup=reply_markup
+                            )
+                            logger.info(f"Successfully sent media for {repo_link} via proxy.")
+                            return # Success, exit the function
+                        except TelegramAPIError as proxy_e:
+                            logger.error(f"Proxy fallback also failed for {repo_link}: {proxy_e}")
+                
+                # --- Fallback 2: Send as text with link preview ---
+                logger.warning(f"Proxy download failed for {repo_link}. Retrying as text with link preview.")
                 try:
                     await self.bot.send_message(
-                        chat_id, caption, parse_mode="HTML", disable_web_page_preview=True,
+                        chat_id, caption, parse_mode="HTML", disable_web_page_preview=False,
                         message_thread_id=thread_id, reply_markup=reply_markup,
                     )
-                except Exception as fallback_e:
-                    logger.error(f"Fallback text-only notification also failed for {repo_link}: {fallback_e}")
+                except Exception as final_fallback_e:
+                    logger.error(f"Final text-only notification also failed for {repo_link}: {final_fallback_e}")
             else:
-                logger.error(f"Telegram API error for repo {repo_link} to target '{target_id}': {e}")
+                # Handle other, unexpected Telegram API errors
+                logger.error(f"Unexpected Telegram API error for repo {repo_link} to target '{target_id}': {e}")

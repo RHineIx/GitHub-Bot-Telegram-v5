@@ -245,3 +245,32 @@ def is_url_excluded(url: str) -> bool:
     Returns True if the URL contains any excluded keyword, otherwise False.
     """
     return any(kw in url.lower() for kw in EXCLUDED_KEYWORDS)
+
+# --- NEW PROFESSIONAL FALLBACK FUNCTION ---
+async def download_image_to_bytes(url: str, session: aiohttp.ClientSession) -> Optional[bytes]:
+    """
+    Downloads an image from a URL and returns its content as bytes.
+    This acts as a proxy to bypass potential hotlinking or user-agent restrictions.
+    
+    Args:
+        url: The URL of the image to download.
+        session: An active aiohttp.ClientSession to use for the request.
+
+    Returns:
+        The image content as bytes if successful, otherwise None.
+    """
+    try:
+        async with session.get(url, timeout=20) as response:
+            if response.status == 200:
+                # Ensure the content is an image before returning
+                if "image" in response.headers.get("Content-Type", "").lower():
+                    return await response.read()
+                else:
+                    logger.warning(f"URL content is not an image: {url}")
+                    return None
+            else:
+                logger.warning(f"Failed to download image from {url}, status: {response.status}")
+                return None
+    except Exception as e:
+        logger.error(f"Exception while downloading image {url}: {e}", exc_info=True)
+        return None
