@@ -33,8 +33,7 @@ async def run():
     start_time = datetime.now(timezone.utc)
     logger.info("Starting Bot...")
 
-    # Pass the settings object to the DatabaseManager
-    db_manager = DatabaseManager(settings)
+    db_manager = DatabaseManager()
     await db_manager.init_db()
 
     github_api = GitHubAPI(db_manager=db_manager, settings=settings)
@@ -92,16 +91,20 @@ async def run():
         logger.info("Bot is shutting down...")
         stop_event.set()
         
+        # Gracefully stop monitors
         star_monitor.stop()
         release_monitor.stop()
         
+        # Wait for the queue to be fully processed
         logger.info("Waiting for notification queue to finish...")
         await repo_queue.join()
 
+        # Cancel any remaining background tasks
         for task in background_tasks:
             task.cancel()
         await asyncio.gather(*background_tasks, return_exceptions=True)
         
+        # Close resources
         await github_api.close()
         await db_manager.close()
         await bot.session.close()
